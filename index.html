@@ -649,7 +649,7 @@ body { overscroll-behavior: none; touch-action: pan-y; }
     <div class="cfg-header">
       <div class="logo-pill">
         <div class="logo-dot"></div>
-        <span>6MWT PRO · CLINICAL</span>
+        <span id="logo-pill-text">6MWT PRO · CLINICAL</span>
       </div>
       <h1>Configure Test</h1>
       <p>Set parameters before beginning the protocol</p>
@@ -856,6 +856,14 @@ body { overscroll-behavior: none; touch-action: pan-y; }
 </div><!-- #app -->
 
 <script>
+// ════════════════════════════════════════
+// APP VERSION — bump this every time we change the code so that you can
+// visually confirm on the iPhone whether the latest version is deployed.
+// Shown in the logo pill on the config screen (e.g. "6MWT PRO · v1.0.0").
+// ════════════════════════════════════════
+const APP_VERSION = '1.0.0';
+const APP_BUILD   = '2026-05-26';
+
 // ════════════════════════════════════════
 // TIMING CONSTANTS — single source of truth for test duration
 // ════════════════════════════════════════
@@ -1592,37 +1600,42 @@ function stopVoice() {
 }
 
 // ════════════════════════════════════════
-// AUTO MODE — MOTION-INTENSITY DETECTION
+// AUTO MODE — GYROSCOPE-PRIMARY DETECTION (wheel + smooth tile floor)
 //
-// DESIGNED FOR PHONE-ATTACHED-TO-MEASURING-WHEEL use case:
-//   When the PT pushes the wheel, two strong signals appear:
-//     • Gyroscope: continuous rotation around the wheel axis (~200–400 deg/s)
-//     • Acceleration: smooth motion with low variance, NOT impact peaks
-//   When stopped, both signals drop to near zero (just hand jitter).
+// USE-CASE-SPECIFIC TUNING:
+//   • Phone is rigidly attached to a measuring wheel/stick (PT pushes it)
+//   • Surface: smooth tile — wheel rolls cleanly, no surface vibration
+//   • Patients vary widely: slow shufflers up to brisk walkers
+//   • At rest: PT holds the stick, slight hand tremor possible
 //
-//   Step-detection (peak counting) failed here because a rolling wheel
-//   produces no impact peaks — the wheel rolls smoothly, it doesn't strike.
+// WHY GYRO-ONLY (no acceleration contribution):
+//   On smooth tile, the wheel rolls without bumps so acceleration variance
+//   is near-zero whether walking or stopped. Worse: hand tremor at rest
+//   adds accel variance → previously would have flipped to "walking" by
+//   mistake. Gyro tells a much cleaner story:
+//     • Wheel rolling:        60–500 deg/s steady rotation
+//     • Wheel stopped + shake:  3–10 deg/s tiny rotational jitter
+//   The gap between these two regimes is huge — gyro alone is reliable.
 //
-// FUSED SCORE = max(gyroMean / GYRO_NORM, accelStdDev / ACCEL_VAR_NORM)
-//   Whichever sensor sees motion first wins. Robust to phone orientation
-//   and works for hand-held, pocket, and wheel-mounted phones.
+// THRESHOLD TUNING (gyro mean of magnitude):
+//   • Slow shuffle  (0.3 m/s walk):     wheel ~70 deg/s   → score 2.8 → 1.0
+//   • Brisk walk    (1.4 m/s walk):     wheel ~330 deg/s  → score 13  → 1.0
+//   • Hand tremor at rest:               ~3–8 deg/s        → score 0.12–0.32 (below entry)
+//   • MOTION_ENTER_THR = 0.45 sits comfortably between these regimes
 //
-// TIME-BASED HYSTERESIS for fast transitions:
-//   • Walking declared after WALK_DECLARE_MS (200 ms) of motion above
-//     MOTION_ENTER_THR — quick to start
-//   • Resting declared after REST_DECLARE_MS (1000 ms) of stillness below
-//     MOTION_EXIT_THR — long enough to ignore brief pauses (turnarounds)
-//   • The gap between EXIT_THR and ENTER_THR is a "dead zone" that
-//     prevents flapping near the boundary
+// FAST TRANSITIONS (time-based hysteresis):
+//   • Walking declared in ~470 ms after PT starts pushing the wheel
+//   • Resting declared in ~1020 ms after PT stops pushing
+//   • Dead zone (0.20–0.45) prevents flapping at the boundary
 // ════════════════════════════════════════
 
-const MOTION_BUF_SIZE     = 10;    // rolling samples for variance (~400 ms @ 25 Hz)
-const MOTION_ENTER_THR    = 0.30;  // score above this counts as moving
-const MOTION_EXIT_THR     = 0.15;  // score below this counts as still (hysteresis gap)
-const WALK_DECLARE_MS     = 200;   // sustained motion before walking is declared
-const REST_DECLARE_MS     = 1000;  // sustained stillness before rest is declared
-const GYRO_NORM           = 30;    // deg/s mean rotation → score = 1
-const ACCEL_VAR_NORM      = 0.35;  // m/s² std-dev          → score = 1
+const MOTION_BUF_SIZE     = 8;     // rolling window (~320 ms @ 25 Hz sampling)
+const MOTION_ENTER_THR    = 0.45;  // score above this counts as moving
+const MOTION_EXIT_THR     = 0.20;  // score below this counts as still (hysteresis gap)
+const WALK_DECLARE_MS     = 150;   // sustained motion before walking is declared
+const REST_DECLARE_MS     = 700;   // sustained stillness before rest is declared
+const GYRO_NORM           = 25;    // deg/s mean rotation → score = 1 (catches slow walkers)
+const ACCEL_VAR_NORM      = 0.50;  // backup signal only, heavily downweighted
 const EMA_ALPHA           = 0.50;  // moderate filtering — keeps response fast
 
 function startMotion() {
@@ -1688,17 +1701,22 @@ function onMotion(e) {
   if (S.accelBuf.length > MOTION_BUF_SIZE) S.accelBuf.shift();
   if (S.gyroBuf.length < 4) return;
 
-  // ── Fused motion score ───────────────────────────────────────────
-  // Gyro: mean rotation rate (wheel rolling, arm swing, body sway)
-  // Accel: std-dev of magnitude (movement variance, ignores gravity offset)
+  // ── Motion score — GYRO IS PRIMARY for smooth-tile + wheel use case ─
+  // Gyro mean of magnitude is the cleanest signal: wheel rolling produces
+  // a strong steady rotation; standing still with hand-tremor produces a
+  // tiny one. The signals don't overlap, so gyro alone is decisive.
+  //
+  // Accel std-dev is kept as a heavily-downweighted backup — only fires
+  // if accel variance is 3×+ stronger than the normalized walking signal
+  // (i.e. the wheel mount comes loose and the phone is being thrashed).
   const gyroMean = S.gyroBuf.reduce((s,v) => s+v, 0) / S.gyroBuf.length;
   const accelMean = S.accelBuf.reduce((s,v) => s+v, 0) / S.accelBuf.length;
   const accelStd = Math.sqrt(
     S.accelBuf.reduce((s,v) => s + (v - accelMean)**2, 0) / S.accelBuf.length
   );
   const gyroScore  = Math.min(gyroMean / GYRO_NORM, 1);
-  const accelScore = Math.min(accelStd / ACCEL_VAR_NORM, 1);
-  const motionScore = Math.max(gyroScore, accelScore);
+  const accelScore = Math.min(accelStd  / ACCEL_VAR_NORM, 1);
+  const motionScore = Math.max(gyroScore, accelScore * 0.3);  // gyro dominates
 
   // ── Time-based hysteresis (records WHEN we crossed each threshold) ─
   if (motionScore > MOTION_ENTER_THR) {
@@ -1833,6 +1851,13 @@ window.addEventListener('beforeunload', e => {
 // ════════════════════════════════════════
 // Attempt API-level portrait lock (works in PWA / fullscreen contexts)
 try { screen.orientation.lock('portrait').catch(()=>{}); } catch(_){}
+
+// Inject version into the logo pill so the clinician can confirm the
+// deployed build matches the latest code (bump APP_VERSION on every change).
+const _logoTxt = document.getElementById('logo-pill-text');
+if (_logoTxt) _logoTxt.textContent = `6MWT PRO · v${APP_VERSION}`;
+// Also expose in console for quick diagnostics
+console.log(`6MWT Pro v${APP_VERSION} (build ${APP_BUILD})`);
 
 setMode('manual');
 </script>
