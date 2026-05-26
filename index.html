@@ -1,0 +1,1848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>6MWT Pro</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Barlow+Condensed:wght@300;400;600;700;900&family=Barlow:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+
+:root {
+  --bg:       #050C17;
+  --bg2:      #0B1829;
+  --card:     #0D1F38;
+  --cborder:  rgba(28,58,100,0.55);
+  --navy:     #1B3A5C;
+  --navyhi:   #24507F;
+  --red:      #E53935;
+  --redglow:  rgba(229,57,53,0.28);
+  --reddark:  #8B0000;
+  --green:    #00E676;
+  --greenglow:rgba(0,230,118,0.22);
+  --greendark:#00A854;
+  --amber:    #FFB300;
+  --white:    #FFFFFF;
+  --offwhite: #DDE9F5;
+  --muted:    #7B96B2;
+  --dimmed:   #3A5070;
+}
+
+html,body {
+  height:100%; background:var(--bg);
+  color:var(--white); font-family:'Barlow',sans-serif;
+  overflow:hidden; position:fixed; width:100%;
+}
+
+#app { height:100%; width:100%; position:relative; overflow:hidden; }
+
+/* ── SCREENS ── */
+.screen {
+  position:absolute; inset:0;
+  display:flex; flex-direction:column;
+  opacity:0; pointer-events:none;
+  transition:opacity .32s cubic-bezier(.4,0,.2,1), transform .32s cubic-bezier(.4,0,.2,1);
+  transform:translateX(28px);
+}
+.screen.active  { opacity:1; pointer-events:all; transform:translateX(0); }
+.screen.exiting { opacity:0; transform:translateX(-28px); }
+
+/* ── SCROLL AREA ── */
+.scroll-area {
+  flex:1; overflow-y:auto; overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;
+  padding:0 20px 20px;
+}
+::-webkit-scrollbar { display:none; }
+
+/* ── BOTTOM BAR ── */
+.bottom-bar {
+  padding:14px 20px;
+  padding-bottom:calc(14px + env(safe-area-inset-bottom,0px));
+  background:linear-gradient(to top, var(--bg) 80%, transparent);
+  flex-shrink:0;
+}
+
+/* ── BUTTONS ── */
+.btn {
+  width:100%; border:none; border-radius:16px;
+  font-family:'Barlow Condensed',sans-serif;
+  font-weight:700; letter-spacing:.1em; text-transform:uppercase;
+  cursor:pointer; transition:transform .1s ease, box-shadow .15s ease;
+  display:flex; align-items:center; justify-content:center; gap:10px;
+}
+.btn:active { transform:scale(0.965); }
+
+.btn-start {
+  height:74px; font-size:22px;
+  background:linear-gradient(145deg, #1E4570 0%, #0D2840 100%);
+  color:var(--white);
+  box-shadow:0 4px 28px rgba(27,58,92,.5), inset 0 1px 0 rgba(255,255,255,.07);
+  border:1px solid rgba(100,160,230,.18);
+}
+
+/* prevent accidental swipe/scroll out of the page */
+html { overscroll-behavior: none; }
+body { overscroll-behavior: none; touch-action: pan-y; }
+
+.btn-rest {
+  height:88px; font-size:24px;
+  background:rgba(0,58,40,.5);
+  color:var(--green);
+  box-shadow:0 0 0 1.5px rgba(0,230,118,.22);
+  border:none;
+  letter-spacing:.1em;
+  position:relative;
+  overflow:hidden;
+  /* disable default long-press menu on mobile */
+  -webkit-user-select:none; user-select:none;
+  -webkit-touch-callout:none;
+}
+/* long-press fill sweeps left→right */
+.btn-rest::after {
+  content:'';
+  position:absolute; top:0; left:0; bottom:0;
+  width:0%; background:rgba(255,255,255,.1);
+  pointer-events:none; border-radius:inherit;
+}
+.btn-rest.pressing::after {
+  width:100%;
+  transition:width 2s linear;
+}
+.btn-rest.is-resting {
+  background:rgba(80,0,0,.55);
+  color:#FFB0B0;
+  box-shadow:0 0 0 1.5px rgba(229,57,53,.28);
+}
+.btn-rest.is-resting.pressing::after {
+  background:rgba(255,255,255,.12);
+}
+
+/* end early — clearly visible but clearly secondary */
+.btn-end-early {
+  width:100%; height:50px; border-radius:12px;
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:16px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
+  cursor:pointer; transition:all .2s;
+  background:rgba(229,57,53,.08);
+  color:rgba(229,57,53,.6);
+  border:1px solid rgba(229,57,53,.2);
+}
+.btn-end-early.confirming {
+  background:rgba(229,57,53,.18);
+  color:var(--red);
+  border-color:rgba(229,57,53,.5);
+  animation:pulse-end .65s infinite alternate;
+}
+@keyframes pulse-end { from{opacity:.75} to{opacity:1} }
+
+#timer-digits {
+  font-family:'IBM Plex Mono',monospace;
+  font-size:96px; font-weight:700; letter-spacing:-.04em; line-height:1;
+  transition:color .5s;
+}
+
+.btn-reset {
+  height:68px; font-size:20px;
+  background:var(--card);
+  color:var(--offwhite);
+  border:1px solid var(--cborder);
+}
+.cfg-header {
+  padding:20px 20px 0;
+  padding-top:calc(18px + env(safe-area-inset-top,0px));
+  flex-shrink:0;
+}
+.logo-pill {
+  display:inline-flex; align-items:center; gap:8px;
+  background:var(--card); border:1px solid var(--cborder);
+  border-radius:7px; padding:5px 12px; margin-bottom:12px;
+}
+.logo-dot {
+  width:7px; height:7px; border-radius:50%; background:var(--green);
+  animation:dotpulse 2.4s ease-in-out infinite;
+}
+@keyframes dotpulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+.logo-pill span {
+  font-family:'IBM Plex Mono',monospace; font-size:11px;
+  color:var(--muted); letter-spacing:.1em;
+}
+.cfg-header h1 {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:38px; font-weight:900; line-height:1.05;
+  letter-spacing:-.01em;
+}
+.cfg-header p { font-size:13px; color:var(--muted); margin-top:3px; }
+
+/* Section label */
+.sec-label {
+  font-family:'IBM Plex Mono',monospace;
+  font-size:9.5px; font-weight:600;
+  letter-spacing:.16em; text-transform:uppercase;
+  color:var(--dimmed); margin:22px 0 9px;
+}
+
+/* Mode cards */
+.mode-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.mode-card {
+  background:var(--card); border:1.5px solid var(--cborder);
+  border-radius:14px; padding:16px 14px;
+  cursor:pointer; transition:all .2s ease; position:relative; overflow:hidden;
+}
+.mode-card.sel {
+  border-color:var(--navyhi);
+  background:rgba(27,58,92,.28);
+  box-shadow:0 0 0 1px var(--navyhi);
+}
+.mode-card.sel::before {
+  content:''; position:absolute; top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg, var(--green), transparent);
+}
+.mode-card-icon { font-size:22px; margin-bottom:8px; }
+.mode-card-title {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:16px; font-weight:700; letter-spacing:.06em;
+  text-transform:uppercase; margin-bottom:4px;
+}
+.mode-card.sel .mode-card-title { color:var(--green); }
+.mode-card-desc { font-size:11px; color:var(--muted); line-height:1.45; }
+.mode-check {
+  position:absolute; top:10px; right:10px;
+  width:18px; height:18px; border-radius:50%;
+  background:var(--green);
+  display:none; align-items:center; justify-content:center;
+  font-size:10px; color:#003020;
+}
+.mode-card.sel .mode-check { display:flex; }
+
+/* Toggle row */
+.toggle-row {
+  background:var(--card); border:1px solid var(--cborder);
+  border-radius:14px; padding:16px;
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+}
+.toggle-info .tlabel {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:17px; font-weight:600; letter-spacing:.03em; margin-bottom:2px;
+}
+.toggle-info .tsub { font-size:11.5px; color:var(--muted); line-height:1.4; }
+.sw {
+  width:52px; height:30px; flex-shrink:0;
+  background:var(--bg2); border:1px solid var(--cborder);
+  border-radius:15px; cursor:pointer; position:relative;
+  transition:background .25s,border-color .25s;
+}
+.sw.on { background:var(--greendark); border-color:var(--greendark); }
+.sw::after {
+  content:''; position:absolute; top:3px; left:3px;
+  width:22px; height:22px; border-radius:50%;
+  background:var(--muted);
+  transition:transform .25s cubic-bezier(.4,0,.2,1), background .25s;
+}
+.sw.on::after { transform:translateX(22px); background:#fff; }
+
+/* Alert toggle options */
+.alert-opts { display:flex; flex-direction:column; gap:8px; }
+.alert-opt {
+  background:var(--card); border:1.5px solid var(--cborder);
+  border-radius:12px; padding:13px 16px;
+  display:flex; align-items:center; gap:14px; cursor:pointer;
+  transition:all .2s;
+}
+.alert-opt.sel {
+  border-color:rgba(0,230,118,.35);
+  background:rgba(0,230,118,.06);
+}
+.ao-icon { font-size:20px; width:28px; text-align:center; flex-shrink:0; }
+.ao-text { flex:1; }
+.ao-title {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:16px; font-weight:600; letter-spacing:.03em; margin-bottom:2px;
+}
+.ao-desc { font-size:11.5px; color:var(--muted); }
+
+/* Test Alarm button — diagnostic tool on config screen */
+.btn-test-alarm {
+  width:100%; height:52px; border:none; border-radius:12px;
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:17px; font-weight:600; letter-spacing:.08em;
+  text-transform:uppercase; cursor:pointer;
+  background:linear-gradient(145deg, #1A4030 0%, #0A2418 100%);
+  color:var(--green);
+  border:1.5px solid rgba(0,230,118,.3);
+  transition:all .15s;
+}
+.btn-test-alarm:active { transform:scale(.97); }
+.btn-test-alarm.playing {
+  background:linear-gradient(145deg, #2A6048 0%, #144028 100%);
+  border-color:rgba(0,230,118,.55);
+  animation:test-pulse .6s ease-in-out infinite alternate;
+}
+@keyframes test-pulse { from{opacity:.7} to{opacity:1} }
+
+.silent-switch-warn {
+  margin-top:10px; padding:10px 12px;
+  background:rgba(255,179,0,.07); border:1px solid rgba(255,179,0,.22);
+  border-radius:8px; font-size:12px; color:var(--amber); line-height:1.45;
+}
+.silent-switch-warn strong { color:#FFD466; font-weight:600; }
+
+/* ════════════════════════════════════
+   ACTIVE SCREEN
+════════════════════════════════════ */
+.act-header {
+  padding:14px 20px 0;
+  padding-top:calc(14px + env(safe-area-inset-top,0px));
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  flex-shrink:0;
+}
+.live-badge {
+  display:flex; align-items:center; gap:6px;
+  background:var(--card); border:1px solid var(--cborder);
+  border-radius:6px; padding:5px 10px;
+}
+.live-dot { width:7px; height:7px; border-radius:50%; background:var(--red); animation:blink 1s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.05} }
+.live-badge span {
+  font-family:'IBM Plex Mono',monospace; font-size:11px;
+  color:var(--muted); letter-spacing:.1em;
+}
+.auto-chip {
+  display:none; align-items:center; gap:5px;
+  background:rgba(255,179,0,.1); border:1px solid rgba(255,179,0,.3);
+  border-radius:6px; padding:5px 10px;
+}
+.auto-chip.vis { display:flex; }
+.auto-chip span { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--amber); letter-spacing:.08em; }
+/* Rest count chip */
+.rest-chip {
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  background:rgba(229,57,53,.1); border:1px solid rgba(229,57,53,.22);
+  border-radius:6px; padding:4px 10px; min-width:48px;
+}
+.rest-chip .rc-lbl {
+  font-family:'IBM Plex Mono',monospace; font-size:8px;
+  letter-spacing:.12em; color:var(--dimmed); text-transform:uppercase; line-height:1;
+}
+.rest-chip .rc-num {
+  font-family:'IBM Plex Mono',monospace; font-size:20px;
+  font-weight:700; color:var(--red); line-height:1.1;
+}
+
+/* Auto mode "detecting" banner shown instead of rest button */
+.auto-detect-msg {
+  display:none;
+  text-align:center; padding:14px;
+  font-family:'IBM Plex Mono',monospace;
+  font-size:11px; letter-spacing:.12em;
+  color:var(--amber); text-transform:uppercase;
+}
+.auto-detect-msg.vis { display:block; }
+
+/* Voice + auto warning */
+.voice-auto-warn {
+  display:none; margin-top:6px; padding:8px 12px;
+  background:rgba(255,179,0,.08); border:1px solid rgba(255,179,0,.25);
+  border-radius:8px; font-size:12px; color:var(--amber); line-height:1.4;
+}
+.voice-auto-warn.vis { display:block; }
+
+/* ════════════════════════════════════
+   ACTIVE SCREEN — TIMER + STATUS
+════════════════════════════════════ */
+.timer-area {
+  flex:1; display:flex; flex-direction:column;
+  justify-content:center; padding:0 20px;
+  gap:12px;
+}
+
+/* Rectangle timer card */
+.timer-card {
+  background:#091524;
+  border-radius:22px;
+  border:2px solid rgba(255,255,255,0.07);
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  padding:28px 20px 22px;
+  transition:border-color .5s ease;
+}
+.timer-card.warn  { border-color:rgba(255,171,32,.45); }
+.timer-card.crit  { border-color:rgba(255,64,64,.55); }
+
+/* Status banner — the critical at-a-glance indicator */
+.status-banner {
+  border-radius:16px;
+  padding:0 22px;
+  height:68px;
+  display:flex; align-items:center; gap:12px;
+  border:2px solid rgba(0,230,118,.35);
+  background:rgba(0,230,118,.08);
+  transition:background .35s ease, border-color .35s ease;
+}
+.status-banner.rest {
+  border-color:rgba(255,64,64,.5);
+  background:rgba(255,64,64,.12);
+}
+.sb-dot {
+  width:11px; height:11px; border-radius:50%; flex-shrink:0;
+  background:var(--green);
+  box-shadow:0 0 10px var(--green);
+  animation:sbpulse 2s infinite;
+  transition:background .35s, box-shadow .35s;
+}
+.status-banner.rest .sb-dot {
+  background:var(--red);
+  box-shadow:0 0 10px var(--red);
+  animation:none;
+}
+@keyframes sbpulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+#status-txt {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:34px; font-weight:800;
+  letter-spacing:.1em; text-transform:uppercase;
+  color:var(--green); transition:color .35s;
+  line-height:1;
+}
+.status-banner.rest #status-txt { color:var(--red); }
+#rest-elapsed {
+  font-family:'IBM Plex Mono',monospace;
+  font-size:26px; font-weight:600;
+  color:var(--red); margin-left:auto;
+  opacity:0; transition:opacity .3s;
+}
+.status-banner.rest #rest-elapsed { opacity:1; }
+
+/* motion bar (auto mode only, stays hidden otherwise) */
+.motion-bar {
+  display:none; align-items:center; gap:8px;
+  padding:0 20px; margin-top:4px; flex-shrink:0;
+}
+.motion-bar.vis { display:flex; }
+.mb-lbl { font-family:'IBM Plex Mono',monospace; font-size:9px; color:var(--dimmed); letter-spacing:.1em; white-space:nowrap; }
+.mb-track { flex:1; height:3px; background:var(--card); border-radius:2px; overflow:hidden; }
+.mb-fill { height:100%; width:0%; background:var(--green); border-radius:2px; transition:width .12s ease, background .3s; }
+.mb-fill.still { background:var(--red); }
+
+/* Rest log — compact */
+.rest-log-wrap { padding:0 20px; margin-top:10px; flex-shrink:0; }
+.rl-hdr { font-family:'IBM Plex Mono',monospace; font-size:9px; letter-spacing:.18em; color:var(--dimmed); text-transform:uppercase; margin-bottom:6px; }
+.rl-list { display:flex; flex-direction:column; max-height:80px; overflow-y:auto; }
+.rl-item {
+  display:flex; align-items:center;
+  padding:6px 0; border-bottom:1px solid var(--cborder);
+  animation:slidein .25s ease;
+}
+@keyframes slidein { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:none} }
+.rl-num { font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--dimmed); width:24px; }
+.rl-time { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); flex:1; }
+.rl-dur { font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:600; color:var(--red); }
+.rl-empty { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--dimmed); padding:4px 0; }
+
+/* ════════════════════════════════════
+   SUMMARY SCREEN
+════════════════════════════════════ */
+.sum-header {
+  padding:22px 20px 0;
+  padding-top:calc(22px + env(safe-area-inset-top,0px));
+  flex-shrink:0;
+}
+.sum-eyebrow {
+  font-family:'IBM Plex Mono',monospace; font-size:10px;
+  letter-spacing:.18em; text-transform:uppercase; color:var(--green); margin-bottom:4px;
+}
+.sum-header h2 {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:36px; font-weight:900;
+}
+
+.stat-grid { display:flex; flex-direction:column; gap:9px; margin-top:4px; }
+.stat-card {
+  background:var(--card); border:1px solid var(--cborder);
+  border-radius:14px; padding:18px 20px;
+  display:flex; align-items:center; justify-content:space-between;
+}
+.stat-lbl {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:15px; font-weight:600; letter-spacing:.05em;
+  text-transform:uppercase; color:var(--muted); margin-bottom:2px;
+}
+.stat-sub { font-size:11px; color:var(--dimmed); }
+.stat-val {
+  font-family:'IBM Plex Mono',monospace;
+  font-size:32px; font-weight:700;
+}
+.col-green { color:var(--green); }
+.col-red   { color:var(--red); }
+.col-amber { color:var(--amber); }
+.col-white { color:var(--white); }
+
+/* Distance input */
+.dist-card {
+  background:var(--card);
+  border:1.5px solid rgba(100,160,230,.28);
+  border-radius:14px; padding:18px 20px; margin-top:9px;
+}
+.dist-lbl {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:13px; font-weight:600; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted); margin-bottom:10px;
+}
+.dist-row { display:flex; align-items:center; gap:10px; }
+#dist-input {
+  flex:1; background:var(--bg2); border:1px solid var(--navy);
+  border-radius:10px; padding:12px 16px;
+  font-family:'IBM Plex Mono',monospace; font-size:30px; font-weight:700;
+  color:var(--white); text-align:center; outline:none;
+  -webkit-user-select:text; user-select:text; width:100%;
+  transition:border-color .2s;
+}
+#dist-input:focus { border-color:rgba(0,230,118,.45); }
+#dist-input::placeholder { color:var(--dimmed); font-size:22px; }
+.dist-unit {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:17px; font-weight:600; color:var(--muted); white-space:nowrap;
+}
+
+/* Summary rest detail */
+.sum-breaks { margin-top:9px; }
+.sum-break-list { display:flex; flex-direction:column; gap:5px; }
+
+/* ════════════════════════════════════
+   ALERT OVERLAY
+════════════════════════════════════ */
+#overlay {
+  position:fixed; inset:0; z-index:9999;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  opacity:0; pointer-events:none;
+  transition:opacity .35s;
+  background:var(--green);
+}
+#overlay.vis { opacity:1; pointer-events:all; }
+#overlay h1 {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:58px; font-weight:900; color:#002B1A; line-height:1;
+  letter-spacing:-.01em; text-align:center;
+}
+#overlay p {
+  font-family:'IBM Plex Mono',monospace;
+  font-size:13px; color:rgba(0,43,26,.6);
+  margin-top:6px; letter-spacing:.12em;
+}
+#overlay-btn {
+  margin-top:44px; padding:14px 36px;
+  background:rgba(0,43,26,.12); border:2px solid rgba(0,43,26,.35);
+  border-radius:12px; font-family:'Barlow Condensed',sans-serif;
+  font-size:19px; font-weight:700; letter-spacing:.1em;
+  text-transform:uppercase; color:#002B1A; cursor:pointer;
+  -webkit-user-select:none; user-select:none;
+}
+
+/* ── PORTRAIT LOCK ── */
+#orient-warn {
+  display:none;
+  position:fixed; inset:0; z-index:99999;
+  background:var(--bg);
+  flex-direction:column; align-items:center; justify-content:center;
+  gap:16px; padding:32px; text-align:center;
+}
+@media screen and (orientation:landscape) {
+  #orient-warn { display:flex; }
+}
+.orient-icon { font-size:52px; animation:rotatehint 2s ease-in-out infinite; }
+@keyframes rotatehint { 0%,40%{transform:rotate(0deg)} 60%,100%{transform:rotate(-90deg)} }
+.orient-title {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:24px; font-weight:700; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--offwhite);
+}
+.orient-sub { font-size:13px; color:var(--muted); }
+
+/* ════════════════════════════════════
+   VOICE CHIP (lives inside act-header now, not fixed overlay)
+════════════════════════════════════ */
+.voice-chip {
+  display:none; align-items:center; gap:5px;
+  background:rgba(0,200,83,.1); border:1px solid rgba(0,200,83,.28);
+  border-radius:6px; padding:5px 10px;
+}
+.voice-chip.vis { display:flex; }
+.vdot { width:7px; height:7px; border-radius:50%; background:var(--green); animation:vp 1.5s infinite; }
+@keyframes vp { 0%,100%{transform:scale(1)} 50%{transform:scale(1.5)} }
+.voice-chip span { font-family:'IBM Plex Mono',monospace; font-size:9.5px; color:var(--green); letter-spacing:.06em; }
+
+/* ════════════════════════════════════
+   COUNTDOWN OVERLAY
+════════════════════════════════════ */
+#countdown-el {
+  position:absolute; inset:0; z-index:200;
+  display:none; flex-direction:column;
+  align-items:center; justify-content:center;
+  background:var(--bg);
+  pointer-events:none;
+}
+#countdown-el.vis { display:flex; }
+#cd-num {
+  font-family:'IBM Plex Mono',monospace;
+  font-size:148px; font-weight:700;
+  color:var(--white); line-height:1;
+}
+#cd-num.pop {
+  animation:cdpop .7s cubic-bezier(.25,1.4,.5,1) both;
+}
+@keyframes cdpop {
+  from { transform:scale(1.5); opacity:0; }
+  to   { transform:scale(1);   opacity:1; }
+}
+#cd-label {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:15px; font-weight:600;
+  letter-spacing:.22em; text-transform:uppercase;
+  color:var(--dimmed); margin-top:10px;
+}
+
+/* ════════════════════════════════════
+   END EARLY BUTTON
+════════════════════════════════════ */
+.btn-end-early {
+  width:100%; height:44px; border:none; border-radius:10px;
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:15px; font-weight:600; letter-spacing:.1em; text-transform:uppercase;
+  cursor:pointer; transition:all .2s ease; margin-bottom:8px;
+  background:transparent;
+  color:var(--dimmed);
+  border:1px solid var(--cborder);
+}
+.btn-end-early.confirming {
+  color:var(--red);
+  border-color:rgba(229,57,53,.45);
+  background:rgba(229,57,53,.08);
+  animation:pulse-end .6s infinite alternate;
+}
+@keyframes pulse-end { from{opacity:.7} to{opacity:1} }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Portrait lock overlay — shown via CSS when device is landscape -->
+  <div id="orient-warn">
+    <div class="orient-icon">📱</div>
+    <div class="orient-title">Rotate to Portrait</div>
+    <div class="orient-sub">6MWT Pro requires portrait orientation</div>
+  </div>
+
+  <!-- Flash overlay — rapid white blink for vibrate/haptic on iOS -->
+  <div id="flash-el" style="position:fixed;inset:0;z-index:8888;background:#FFFFFF;opacity:0;pointer-events:none;"></div>
+
+  <!-- End-of-test overlay (green flash) -->
+  <div id="overlay">
+    <h1>TEST<br>COMPLETE</h1>
+    <p>6:00 ELAPSED — STOP PATIENT</p>
+    <button id="overlay-btn">VIEW RESULTS →</button>
+  </div>
+
+  <!-- ══════════ SCREEN 1: CONFIG ══════════ -->
+  <div class="screen active" id="s-config">
+    <div class="cfg-header">
+      <div class="logo-pill">
+        <div class="logo-dot"></div>
+        <span>6MWT PRO · CLINICAL</span>
+      </div>
+      <h1>Configure Test</h1>
+      <p>Set parameters before beginning the protocol</p>
+    </div>
+
+    <div class="scroll-area">
+      <div class="sec-label">Tracking Mode</div>
+      <div class="mode-grid">
+        <div class="mode-card" id="mc-auto" onclick="setMode('auto')">
+          <div class="mode-check">✓</div>
+          <div class="mode-card-icon">📡</div>
+          <div class="mode-card-title">Auto</div>
+          <div class="mode-card-desc">Accelerometer detects rest periods automatically</div>
+        </div>
+        <div class="mode-card sel" id="mc-manual" onclick="setMode('manual')">
+          <div class="mode-check">✓</div>
+          <div class="mode-card-icon">👆</div>
+          <div class="mode-card-title">Manual</div>
+          <div class="mode-card-desc">PT taps the button to log each rest period</div>
+        </div>
+      </div>
+
+      <div class="sec-label">Voice Control</div>
+      <div class="toggle-row" id="voice-toggle-row">
+        <div class="toggle-info">
+          <div class="tlabel">Voice Commands</div>
+          <div class="tsub">"Log rest" · "Resume walking" · Hands-free operation</div>
+        </div>
+        <div class="sw" id="voice-sw" onclick="toggleVoice()"></div>
+      </div>
+      <div class="voice-auto-warn" id="voice-auto-warn">
+        ⚠ Voice control is not recommended in Auto mode. Background noise may trigger false detections.
+      </div>
+
+      <div class="sec-label">End-of-Test Alert</div>
+      <div class="alert-opts">
+        <div class="alert-opt" id="ao-vibrate" onclick="toggleAlert('vibrate')">
+          <div class="ao-icon">📳</div>
+          <div class="ao-text">
+            <div class="ao-title">Haptic + Flash</div>
+            <div class="ao-desc">Screen flash (+ vibration on Android)</div>
+          </div>
+          <div class="sw" id="ao-sw-vibrate"></div>
+        </div>
+        <div class="alert-opt sel" id="ao-green" onclick="toggleAlert('green')">
+          <div class="ao-icon">🟢</div>
+          <div class="ao-text">
+            <div class="ao-title">Bright Green Screen</div>
+            <div class="ao-desc">Full-screen high-visibility alert</div>
+          </div>
+          <div class="sw on" id="ao-sw-green"></div>
+        </div>
+        <div class="alert-opt" id="ao-sound" onclick="toggleAlert('sound')">
+          <div class="ao-icon">🔔</div>
+          <div class="ao-text">
+            <div class="ao-title">Alarm Sound</div>
+            <div class="ao-desc">Loud ascending audio alert</div>
+          </div>
+          <div class="sw" id="ao-sw-sound"></div>
+        </div>
+      </div>
+
+      <!-- Test Alarm button — appears ONLY when Alarm Sound is enabled.
+           Lets the clinician verify audio works BEFORE starting a 6-min test.
+           Most-common cause of silent alarm: iPhone physical silent switch is ON. -->
+      <div id="test-alarm-wrap" style="display:none; margin-top:10px;">
+        <button class="btn-test-alarm" id="test-alarm-btn" onclick="testAlarm()">
+          <span id="test-alarm-label">🔊 Test Alarm Sound</span>
+        </button>
+        <div class="silent-switch-warn">
+          ⚠ <strong>If you hear nothing:</strong> check the physical <strong>silent switch</strong>
+          on the side of your iPhone — it must be flipped <strong>OFF</strong>
+          (no orange visible). iOS silences all web audio when this switch is on.
+        </div>
+      </div>
+
+      <div style="height:8px"></div>
+    </div>
+
+    <div class="bottom-bar">
+      <button class="btn btn-start" onclick="beginTest()">
+        ▶&nbsp;&nbsp;Begin 6-Minute Walk Test
+      </button>
+    </div>
+  </div>
+
+  <!-- ══════════ SCREEN 2: ACTIVE TEST ══════════ -->
+  <div class="screen" id="s-active">
+
+    <!-- 5-4-3-2-1-GO! countdown before test starts -->
+    <div id="countdown-el">
+      <div id="cd-num">5</div>
+      <div id="cd-label">GET READY</div>
+    </div>
+
+    <div class="act-header">
+      <div class="live-badge">
+        <div class="live-dot"></div>
+        <span>LIVE</span>
+      </div>
+      <div class="auto-chip" id="auto-chip">
+        <span>📡 AUTO</span>
+      </div>
+      <!-- Voice chip now lives HERE in the header row, not as a fixed overlay -->
+      <div class="voice-chip" id="voice-chip">
+        <div class="vdot"></div>
+        <span>VOICE</span>
+      </div>
+      <div class="rest-chip" id="rest-chip">
+        <span class="rc-lbl">RESTS</span>
+        <span class="rc-num" id="rc-num">0</span>
+      </div>
+    </div>
+
+    <div class="timer-area">
+
+      <!-- Rectangle timer card -->
+      <div class="timer-card" id="timer-card">
+        <div id="timer-digits">0:20</div>
+        <div class="timer-lbl">REMAINING</div>
+      </div>
+
+      <!-- Large status banner — the at-a-glance mode indicator -->
+      <div class="status-banner" id="sp">
+        <div class="sb-dot"></div>
+        <span id="status-txt">WALKING</span>
+        <span id="rest-elapsed"></span>
+      </div>
+
+    </div>
+
+    <div class="motion-bar" id="motion-bar" style="display:none">
+      <span class="mb-lbl">GYRO+ACCEL</span>
+      <div class="mb-track"><div class="mb-fill" id="mb-fill"></div></div>
+    </div>
+
+    <!-- shown instead of rest button in auto mode -->
+    <div class="auto-detect-msg" id="auto-detect-msg">
+      📡 Automatic rest detection active
+    </div>
+
+    <div class="rest-log-wrap">
+      <div class="rl-hdr">Rest Log</div>
+      <div class="rl-list" id="rl-list">
+        <div class="rl-empty">No rests logged yet</div>
+      </div>
+    </div>
+
+    <div class="bottom-bar">
+      <button class="btn-end-early" id="end-early-btn" onclick="endTestEarly()">
+        End Test Early
+      </button>
+      <button class="btn btn-rest" id="rest-btn" onclick="toggleRest()">
+        Log Rest
+      </button>
+    </div>
+  </div>
+
+  <!-- ══════════ SCREEN 3: SUMMARY ══════════ -->
+  <div class="screen" id="s-summary">
+    <div class="sum-header">
+      <div class="sum-eyebrow">✓ Protocol Complete</div>
+      <h2>Test Results</h2>
+    </div>
+
+    <div class="scroll-area">
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div>
+            <div class="stat-lbl">Total Test Time</div>
+            <div class="stat-sub">Elapsed duration</div>
+          </div>
+          <div class="stat-val col-green" id="s-total-time">6:00</div>
+        </div>
+        <div class="stat-card">
+          <div>
+            <div class="stat-lbl">Total Rests</div>
+            <div class="stat-sub">Number of stops taken</div>
+          </div>
+          <div class="stat-val col-red" id="s-rest-count">0</div>
+        </div>
+        <div class="stat-card">
+          <div>
+            <div class="stat-lbl">Total Rest Time</div>
+            <div class="stat-sub">Cumulative stopped time</div>
+          </div>
+          <div class="stat-val col-amber" id="s-rest-time">0:00</div>
+        </div>
+      </div>
+
+      <div class="sum-breaks" id="sum-breaks" style="display:none">
+        <div class="sec-label">Rest Breakdown</div>
+        <div class="sum-break-list" id="sum-break-list"></div>
+      </div>
+
+      <div style="height:8px"></div>
+    </div>
+
+    <div class="bottom-bar">
+      <button class="btn btn-reset" onclick="resetTest()">↺&nbsp;&nbsp;New Test</button>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<script>
+// ════════════════════════════════════════
+// TIMING CONSTANTS — single source of truth for test duration
+// ════════════════════════════════════════
+const TOTAL_SEC      = 20;   // ◄── TEST MODE. Set to 360 for production (6 min)
+const COUNTDOWN_SEC  = 5.9;  // duration of startCountdown() before runTimer starts
+                             // (5 ticks at 1 s + 0.9 s GO! display)
+const ALARM_DUR_SEC  = 2.5;  // duration of the alarm tones at end
+const PRE_ALARM_SEC  = COUNTDOWN_SEC + TOTAL_SEC;     // position in audio where alarm fires
+const AUDIO_DUR_SEC  = PRE_ALARM_SEC + ALARM_DUR_SEC; // total audio length
+
+// ════════════════════════════════════════
+// TIMED ALARM AUDIO — one long WAV: pip → silence → alarm
+//
+// WHY THIS DESIGN:
+// iOS Safari's HTMLAudioElement unlock-and-fire-later pattern is unreliable
+// for long delays. The audio session aggressively deactivates after periods
+// of inactivity, and the same .play() call that worked instantly fails 30
+// seconds later. This has been confirmed across many community reports and
+// matches the user's experience: "sometimes it works, sometimes it doesn't."
+//
+// The fix: PLAY CONTINUOUS AUDIO THROUGHOUT THE TEST.
+// This is a single WAV containing:
+//   • 0.00–0.20 s: quiet pip (7% amp)   — confirms audio is armed at Begin tap
+//   • 0.20 s  → PRE_ALARM_SEC: SILENCE  — runs during countdown + walk test
+//   • PRE_ALARM_SEC → end: LOUD ALARM   — fires at exactly 0:00 on the timer
+//
+// Because audio is actively playing the whole time, iOS treats this like
+// any other media app (Spotify/podcasts) — it keeps the audio session live
+// and never has to "wake up" anything. The alarm sounds naturally because
+// it's already baked into the audio stream.
+//
+// 11025 Hz mono 16-bit → ~570 KB for a 28-second test audio.
+// ════════════════════════════════════════
+const TIMED_ALARM_SRC = (() => {
+  const sr = 11025;  // sufficient for our 523–880 Hz alarm tones
+  const samples = Math.ceil(sr * AUDIO_DUR_SEC);
+  const pcm = new Int16Array(samples); // zero-init → silence everywhere by default
+
+  // ── Soft confirmation pip (0.00–0.20 s, 7% amplitude) ────────────────
+  // Plays immediately on Begin tap; reassures clinician audio is working.
+  {
+    const f = 880, dur = 0.20;
+    const a = 0, b = Math.min(pcm.length, (dur*sr)|0);
+    for (let i = a; i < b; i++) {
+      const fade = Math.min(i/(sr*0.008),1) * Math.min((b-1-i)/(sr*0.008),1);
+      pcm[i] = (Math.sin(2*Math.PI*f*i/sr) * fade * 0.07 * 32767)|0;
+    }
+  }
+
+  // ── Silence from 0.20 s to PRE_ALARM_SEC (already zero-init) ─────────
+
+  // ── LOUD ALARM starting at PRE_ALARM_SEC ─────────────────────────────
+  // 5 ascending square-wave tones at 45% amplitude — piercing and clear.
+  [[523,0.00,0.20],[659,0.25,0.20],[784,0.50,0.20],[880,0.75,0.20],[880,1.05,0.60]]
+    .forEach(([f, t0, dur]) => {
+      const startSec = PRE_ALARM_SEC + t0;
+      const a = (startSec*sr)|0;
+      const b = Math.min(pcm.length, ((startSec + dur)*sr)|0);
+      for (let i = a; i < b; i++) {
+        const fade = Math.min((i-a)/(sr*0.005),1) * Math.min((b-1-i)/(sr*0.005),1);
+        pcm[i] = ((Math.sin(2*Math.PI*f*i/sr) >= 0 ? 1 : -1) * fade * 0.45 * 32767)|0;
+      }
+    });
+
+  // ── WAV header ───────────────────────────────────────────────────────
+  const h = new ArrayBuffer(44), v = new DataView(h);
+  const ws = (s,o) => [...s].forEach((c,i) => v.setUint8(o+i,c.charCodeAt(0)));
+  ws('RIFF',0); v.setUint32(4,36+pcm.byteLength,true);
+  ws('WAVE',8); ws('fmt ',12);
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true);
+  v.setUint16(32,2,true); v.setUint16(34,16,true);
+  ws('data',36); v.setUint32(40,pcm.byteLength,true);
+  return URL.createObjectURL(new Blob([h, pcm.buffer], {type:'audio/wav'}));
+})();
+
+// ════════════════════════════════════════
+// PERSISTENT ALARM ELEMENT — created ONCE for the page lifetime.
+// Per Apple/WebKit guidance: the same HTMLAudioElement instance must be
+// used start-to-end. Creating a new one per test risks losing the unlock.
+// ════════════════════════════════════════
+const ALARM_AUDIO = new Audio(TIMED_ALARM_SRC);
+ALARM_AUDIO.setAttribute('playsinline', '');
+ALARM_AUDIO.setAttribute('webkit-playsinline', '');
+ALARM_AUDIO.setAttribute('x-webkit-airplay', 'deny'); // prevent accidental AirPlay handoff
+ALARM_AUDIO.preload = 'auto';
+ALARM_AUDIO.controls = false;
+ALARM_AUDIO.autoplay = false;
+ALARM_AUDIO.loop = false;
+ALARM_AUDIO.load();
+
+
+// ════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════
+const S = {
+  mode:      'manual',   // 'auto' | 'manual'
+  voiceOn:   false,
+  // alerts — each can be toggled independently, any combination allowed
+  alerts: { vibrate: false, green: true, sound: false },
+
+  // timer — uses TOTAL_SEC constant defined above
+  TOTAL:      TOTAL_SEC,
+  remaining:  TOTAL_SEC,
+  timerInt:   null,
+
+  // rest
+  isResting:         false,
+  restCount:         0,
+  restLog:           [],   // {n, startSec, durSec}
+  restStartMs:       null,
+  restElapsedSec:    0,
+  restElapsedInt:    null,
+  totalRestSec:      0,
+
+  // motion (auto)
+  accelBuf:          [],
+  gyroBuf:           [],
+  accelFiltered:     0,    // EMA-filtered accel — removes hand tremor
+  gyroFiltered:      0,    // EMA-filtered gyro
+  stillFrames:       0,
+  walkFrames:        0,    // frames of sustained motion needed to exit rest
+  motionHandler:     null,
+  motionGrace:       true,  // grace period at test start
+  hasLinearAccel:    null,  // detected on first motion event
+
+  // audio (pre-warmed on user tap so iOS doesn't block it)
+  audioCtx:          null,
+
+  // wake lock
+  wakeLock:          null,
+
+  // end early double-tap
+  earlyEndPending:   false,
+  earlyEndTimer:     null,
+
+  // actual elapsed (for early end summary)
+  actualElapsed:     TOTAL_SEC,
+
+  // voice
+  recognition:       null,
+  voiceCooldown:     0,
+
+  // pre-scheduled alarm nodes — cancelled on early end
+  alarmNodes:        [],
+  // alarmAudio is the module-level ALARM_AUDIO above — same element reused
+  // across tests. We do not recreate it. Kept here as null until beginTest()
+  // assigns the reference so existing code paths keep working.
+  alarmAudio:        null,
+};
+
+// circumference = 2π × 122.5 = 769.69 ≈ 769.7
+const CIRC = 769.7;
+
+// ════════════════════════════════════════
+// UTILS
+// ════════════════════════════════════════
+function fmt(sec) {
+  const m = Math.floor(Math.abs(sec) / 60);
+  const s = Math.abs(sec) % 60;
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+function elapsedSec() { return S.TOTAL - S.remaining; }
+
+// ════════════════════════════════════════
+// SCREEN SYSTEM
+// ════════════════════════════════════════
+function go(id) {
+  document.querySelectorAll('.screen').forEach(el => {
+    el.classList.remove('active','exiting');
+    if (!el.id.includes(id)) {
+      el.style.pointerEvents = 'none';
+    }
+  });
+  const t = document.getElementById(id);
+  t.classList.add('active');
+  t.style.pointerEvents = 'all';
+}
+
+// ════════════════════════════════════════
+// CONFIG
+// ════════════════════════════════════════
+function setMode(m) {
+  S.mode = m;
+  document.getElementById('mc-auto').classList.toggle('sel', m==='auto');
+  document.getElementById('mc-manual').classList.toggle('sel', m==='manual');
+
+  const voiceRow  = document.getElementById('voice-toggle-row');
+  const voiceSw   = document.getElementById('voice-sw');
+  const warnEl    = document.getElementById('voice-auto-warn');
+
+  if (m === 'auto') {
+    // Lock voice off and visually disable the row
+    S.voiceOn = false;
+    voiceSw.classList.remove('on');
+    voiceRow.style.opacity    = '0.35';
+    voiceRow.style.pointerEvents = 'none';
+    warnEl.classList.add('vis');
+  } else {
+    voiceRow.style.opacity    = '1';
+    voiceRow.style.pointerEvents = 'auto';
+    warnEl.classList.remove('vis');
+  }
+}
+
+function toggleVoice() {
+  S.voiceOn = !S.voiceOn;
+  document.getElementById('voice-sw').classList.toggle('on', S.voiceOn);
+}
+
+function toggleAlert(key) {
+  S.alerts[key] = !S.alerts[key];
+  const row = document.getElementById('ao-' + key);
+  const sw  = document.getElementById('ao-sw-' + key);
+  row.classList.toggle('sel', S.alerts[key]);
+  sw.classList.toggle('on',   S.alerts[key]);
+
+  // Show/hide the Test Alarm button alongside the Alarm Sound toggle
+  if (key === 'sound') {
+    document.getElementById('test-alarm-wrap').style.display =
+      S.alerts.sound ? 'block' : 'none';
+  }
+}
+
+// ════════════════════════════════════════
+// TEST ALARM — diagnostic tool. Plays the loud alarm portion of the audio
+// directly from the config screen so the clinician can verify it works
+// BEFORE committing to a 6-minute test. If silent: silent switch is on.
+// ════════════════════════════════════════
+let _testAlarmEl = null;
+function testAlarm() {
+  const btn = document.getElementById('test-alarm-btn');
+  const lbl = document.getElementById('test-alarm-label');
+
+  // If already playing, stop it
+  if (_testAlarmEl && !_testAlarmEl.paused) {
+    try { _testAlarmEl.pause(); _testAlarmEl.currentTime = 0; } catch(_){}
+    btn.classList.remove('playing');
+    lbl.textContent = '🔊 Test Alarm Sound';
+    return;
+  }
+
+  // Use the SAME persistent ALARM_AUDIO element so the iOS unlock state
+  // we acquire here carries over to the real test.
+  _testAlarmEl = ALARM_AUDIO;
+  try {
+    _testAlarmEl.pause();
+    // Jump straight to the alarm portion of the audio (skip the silence)
+    _testAlarmEl.currentTime = PRE_ALARM_SEC;
+  } catch(_) {}
+
+  btn.classList.add('playing');
+  lbl.textContent = '⏸ Stop Test';
+
+  _testAlarmEl.play().then(() => {
+    // When the alarm finishes naturally, reset the button state
+    const onEnd = () => {
+      btn.classList.remove('playing');
+      lbl.textContent = '🔊 Test Alarm Sound';
+      try { _testAlarmEl.currentTime = 0; } catch(_){}
+      _testAlarmEl.removeEventListener('ended', onEnd);
+    };
+    _testAlarmEl.addEventListener('ended', onEnd);
+  }).catch(err => {
+    btn.classList.remove('playing');
+    lbl.textContent = '❌ Audio blocked — check silent switch';
+    setTimeout(() => { lbl.textContent = '🔊 Test Alarm Sound'; }, 4000);
+    console.warn('Test alarm play failed:', err);
+  });
+}
+
+// ════════════════════════════════════════
+// COUNTDOWN — 5-4-3-2-1-GO! before timer starts
+// ════════════════════════════════════════
+function startCountdown(cb) {
+  const el    = document.getElementById('countdown-el');
+  const numEl = document.getElementById('cd-num');
+  const lblEl = document.getElementById('cd-label');
+
+  let count = 5;
+
+  // helper: re-trigger pop animation
+  function showNum(text, isGo) {
+    numEl.classList.remove('pop');
+    numEl.getBoundingClientRect(); // force reflow
+    numEl.classList.add('pop');
+    numEl.textContent = text;
+    numEl.style.color = isGo ? 'var(--green)' : '';
+    lblEl.textContent = isGo ? 'START WALKING' : 'GET READY';
+  }
+
+  el.classList.add('vis');
+  showNum(count, false);
+
+  const tick = setInterval(() => {
+    count--;
+    if (count > 0) {
+      showNum(count, false);
+    } else {
+      clearInterval(tick);
+      showNum('GO!', true);
+      setTimeout(() => {
+        el.classList.remove('vis');
+        numEl.style.color = '';
+        numEl.classList.remove('pop');
+        cb();
+      }, 900);
+    }
+  }, 1000);
+}
+
+// ════════════════════════════════════════
+// BEGIN TEST
+// ════════════════════════════════════════
+function beginTest() {
+  clearAll();
+
+  // ── Pre-warm AudioContext NOW (must be inside a user gesture on iOS) ──
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    S.audioCtx = new AC();
+    // Play a 1-sample silent buffer — this "unlocks" audio on iOS Safari
+    const buf = S.audioCtx.createBuffer(1, 1, 22050);
+    const src = S.audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(S.audioCtx.destination);
+    src.start(0);
+  } catch(e) { console.warn('AudioContext init:', e); }
+
+  // ── CONTINUOUS AUDIO PLAYBACK ──────────────────────────────────────
+  // We use the persistent module-level ALARM_AUDIO element. Reset its
+  // position to 0 (in case a previous test left it elsewhere), then if
+  // the Alarm Sound toggle is on, start playing immediately.
+  //
+  // The single long WAV contains: pip → silence → alarm. By starting it
+  // inside this user-gesture context, iOS keeps the audio session alive
+  // for the entire test, and the alarm fires naturally when the audio
+  // reaches the PRE_ALARM_SEC mark (which lines up with the timer at 0:00).
+  S.alarmAudio = ALARM_AUDIO;
+  try {
+    S.alarmAudio.pause();
+    S.alarmAudio.currentTime = 0;
+  } catch(_) {}
+
+  if (S.alerts.sound) {
+    // Play in the user gesture — this is the moment iOS allows audio.
+    // The 0.20 s soft pip will play right now (confirms audio works);
+    // then silence runs through the countdown + test; then the loud
+    // alarm fires at PRE_ALARM_SEC of the audio = exactly 0:00 on timer.
+    S.alarmAudio.play().catch(e => console.warn('Alarm play failed:', e));
+  }
+
+  // Keep AudioContext running — call resume() every 5 s so currentTime
+  // advances and pre-scheduled nodes fire on time.
+  (function tickle() {
+    if (S.remaining <= 0 || !S.audioCtx) return;
+    S.audioCtx.resume().then(() => {
+      try {
+        const b = S.audioCtx.createBuffer(1, 1, 22050);
+        const s = S.audioCtx.createBufferSource();
+        s.buffer = b; s.connect(S.audioCtx.destination); s.start();
+      } catch(_) {}
+    }).catch(() => {});
+    setTimeout(tickle, 5000);
+  })();
+
+  go('s-active');
+
+  const isAuto = S.mode === 'auto';
+  document.getElementById('auto-chip').classList.toggle('vis', isAuto);
+  // Auto mode: hide rest button, show detection message; manual: opposite
+  document.getElementById('rest-btn').style.display        = isAuto ? 'none' : '';
+  document.getElementById('auto-detect-msg').classList.toggle('vis', isAuto);
+  // Motion bar only in auto mode (hidden by default per cleaner UI)
+  document.getElementById('motion-bar').style.display      = isAuto ? 'flex' : 'none';
+
+  if (S.voiceOn) startVoice();
+  if (isAuto) startMotion();
+
+  // Request screen wake lock so display stays on during test
+  requestWakeLock();
+
+  // Motion grace active until countdown finishes
+  S.motionGrace = true;
+
+  refreshUI();
+
+  // Show 5-4-3-2-1-GO! then start the timer (and lift the motion grace)
+  startCountdown(() => {
+    S.motionGrace = false;
+    runTimer();
+  });
+}
+
+// ════════════════════════════════════════
+// TIMER — never stops once started
+// ════════════════════════════════════════
+function runTimer() {
+  // Re-confirm wake lock is still held — the countdown could have released it
+  if (!S.wakeLock) requestWakeLock();
+
+  const startMs = Date.now();
+  const startRemaining = S.remaining;
+
+  S.timerInt = setInterval(() => {
+    // Use wall-clock for accuracy
+    const elapsedMs = Date.now() - startMs;
+    S.remaining = Math.max(0, startRemaining - Math.floor(elapsedMs / 1000));
+    renderTimer();
+
+    if (S.remaining === 0) {
+      clearInterval(S.timerInt);
+      if (S.isResting) endRest(true);
+      stopMotion();
+      releaseWakeLock();
+      S.actualElapsed = S.TOTAL;
+      doAlert();
+    }
+  }, 250); // poll 4x/sec for smooth display
+}
+
+function renderTimer() {
+  const digits = document.getElementById('timer-digits');
+  const card   = document.getElementById('timer-card');
+  digits.textContent = fmt(S.remaining);
+
+  // Thresholds scale with S.TOTAL so the same proportional warning
+  // applies whether the test is 30 s (dev) or 360 s (production)
+  const critSec = Math.ceil(S.TOTAL * 0.15); // last 15% → red    (54 s of 360)
+  const warnSec = Math.ceil(S.TOTAL * 0.35); // last 35% → amber  (126 s of 360)
+
+  if (S.remaining <= critSec) {
+    digits.style.color = 'var(--red)';
+    card.classList.add('crit');
+    card.classList.remove('warn');
+  } else if (S.remaining <= warnSec) {
+    digits.style.color = 'var(--amber)';
+    card.classList.add('warn');
+    card.classList.remove('crit');
+  } else {
+    digits.style.color = '#FFFFFF';
+    card.classList.remove('warn','crit');
+  }
+}
+
+// ════════════════════════════════════════
+// REST TRACKING
+// ════════════════════════════════════════
+function toggleRest() {
+  if (S.remaining <= 0) return;
+  if (S.isResting) endRest(false);
+  else beginRest();
+}
+
+function beginRest() {
+  if (S.isResting) return;
+  S.isResting = true;
+  S.restCount++;
+  S.restStartMs = Date.now();
+  S.restElapsedSec = 0;
+
+  // Tick the rest elapsed counter
+  S.restElapsedInt = setInterval(() => {
+    S.restElapsedSec = Math.floor((Date.now() - S.restStartMs) / 1000);
+    document.getElementById('rest-elapsed').textContent = fmt(S.restElapsedSec);
+  }, 500);
+
+  refreshUI();
+}
+
+function endRest(fromTimer) {
+  if (!S.isResting) return;
+  const durSec = Math.round((Date.now() - S.restStartMs) / 1000);
+  S.totalRestSec += durSec;
+  S.restLog.push({ n: S.restCount, startSec: elapsedSec() - durSec, durSec });
+  S.isResting = false;
+  clearInterval(S.restElapsedInt);
+  document.getElementById('rest-elapsed').textContent = '';
+  refreshUI();
+  renderLog();
+}
+
+function refreshUI() {
+  const resting = S.isResting;
+  document.getElementById('sp').classList.toggle('rest', resting);
+  document.getElementById('status-txt').textContent = resting ? 'RESTING' : 'WALKING';
+
+  const btn = document.getElementById('rest-btn');
+  btn.classList.toggle('is-resting', resting);
+  btn.textContent = resting ? 'Resume Walking' : 'Log Rest';
+
+  document.getElementById('rc-num').textContent = S.restCount;
+}
+
+function renderLog() {
+  const list = document.getElementById('rl-list');
+  if (!S.restLog.length) {
+    list.innerHTML = '<div class="rl-empty">No rests logged yet</div>';
+    return;
+  }
+  list.innerHTML = [...S.restLog].reverse().map(r =>
+    `<div class="rl-item">
+      <span class="rl-num">#${r.n}</span>
+      <span class="rl-time">at ${fmt(r.startSec)}</span>
+      <span class="rl-dur">${fmt(r.durSec)}</span>
+    </div>`
+  ).join('');
+}
+
+// ════════════════════════════════════════
+// ALERT — end of test
+// ════════════════════════════════════════
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+function doAlert() {
+  const a = S.alerts;
+
+  // ── Visual / haptic ───────────────────────────────────────────────────
+  if (a.vibrate) {
+    if (navigator.vibrate) navigator.vibrate([400,100,400,100,400,100,700]);
+    doFlashBeep(); // screen flash — purely visual, no audio
+  }
+
+  // ── Audio — continuous playback already running from beginTest() ──
+  // The audio file's alarm section begins at PRE_ALARM_SEC, which lines
+  // up with this moment. Normally there's nothing to do here — the alarm
+  // is already sounding as part of the continuous stream.
+  //
+  // Defense in depth: if for any reason playback drifted, ended, or got
+  // paused by iOS (phone call, interruption), force the alarm position
+  // and resume. This guarantees the alarm fires even in edge cases.
+  if (a.sound && S.alarmAudio) {
+    try {
+      const t  = S.alarmAudio.currentTime;
+      const ae = PRE_ALARM_SEC + ALARM_DUR_SEC;
+      if (t < PRE_ALARM_SEC - 0.3 || t >= ae) {
+        S.alarmAudio.currentTime = PRE_ALARM_SEC;
+      }
+      if (S.alarmAudio.paused || S.alarmAudio.ended) {
+        S.alarmAudio.play().catch(() => {});
+      }
+    } catch(_) {
+      S.alarmAudio.play().catch(() => {});
+    }
+  }
+
+  // ── Screen overlay / summary routing ─────────────────────────────────
+  if (a.green) {
+    document.getElementById('overlay').classList.add('vis');
+  } else {
+    const delay = a.sound ? 3000 : a.vibrate ? 1800 : 600;
+    setTimeout(showSummary, delay);
+  }
+}
+
+document.getElementById('overlay-btn').addEventListener('click', () => {
+  document.getElementById('overlay').classList.remove('vis');
+  showSummary();
+});
+
+function cancelAlarm() {
+  S.alarmNodes.forEach(n => { try { n.stop(0); } catch(_){} });
+  S.alarmNodes = [];
+}
+
+// Rapid screen flash — purely visual, no audio here.
+// Audio is handled separately in doAlert() gated by a.sound.
+function doFlashBeep() {
+  const el = document.getElementById('flash-el');
+  let count = 0;
+  const interval = setInterval(() => {
+    el.style.opacity = count % 2 === 0 ? '0.85' : '0';
+    count++;
+    if (count >= 6) { clearInterval(interval); el.style.opacity = '0'; }
+  }, 160);
+}
+
+// ════════════════════════════════════════
+// SUMMARY
+// ════════════════════════════════════════
+function showSummary() {
+  stopVoice();
+  releaseWakeLock();
+  document.getElementById('s-total-time').textContent = fmt(S.actualElapsed);
+  document.getElementById('s-rest-count').textContent = S.restCount;
+  document.getElementById('s-rest-time').textContent = fmt(S.totalRestSec);
+
+  const breaks = document.getElementById('sum-breaks');
+  const blist  = document.getElementById('sum-break-list');
+  if (S.restLog.length) {
+    breaks.style.display = 'block';
+    blist.innerHTML = S.restLog.map(r =>
+      `<div class="rl-item">
+        <span class="rl-num">#${r.n}</span>
+        <span class="rl-time">at ${fmt(r.startSec)}</span>
+        <span class="rl-dur">${fmt(r.durSec)}</span>
+      </div>`
+    ).join('');
+  } else {
+    breaks.style.display = 'none';
+  }
+
+  go('s-summary');
+}
+
+// ════════════════════════════════════════
+// RESET
+// ════════════════════════════════════════
+function clearAll() {
+  clearInterval(S.timerInt);
+  clearInterval(S.restElapsedInt);
+  clearTimeout(S.earlyEndTimer);
+  cancelAlarm();
+  stopVoice();
+  stopMotion();
+  releaseWakeLock();
+
+  S.remaining      = S.TOTAL;
+  S.isResting      = false;
+  S.restCount      = 0;
+  S.restLog        = [];
+  S.restStartMs    = null;
+  S.restElapsedSec = 0;
+  S.totalRestSec   = 0;
+  S.accelBuf       = [];
+  S.gyroBuf        = [];
+  S.accelFiltered  = 0;
+  S.gyroFiltered   = 0;
+  S.stillFrames    = 0;
+  S.walkFrames     = 0;
+  S.hasLinearAccel = null;
+  S.earlyEndPending = false;
+  S.actualElapsed  = S.TOTAL;
+  S.motionGrace    = true;
+  // Stop any in-flight audio playback but DO NOT null S.alarmAudio —
+  // we reuse the same persistent HTMLAudioElement (ALARM_AUDIO) across
+  // tests so its iOS unlock state stays intact.
+  if (S.alarmAudio) {
+    try { S.alarmAudio.pause(); S.alarmAudio.currentTime = 0; } catch(_){}
+  }
+
+  document.getElementById('rl-list').innerHTML = '<div class="rl-empty">No rests logged yet</div>';
+  document.getElementById('rest-elapsed').textContent = '';
+  document.getElementById('rc-num').textContent = '0';
+  document.getElementById('timer-digits').textContent = fmt(S.TOTAL);
+  document.getElementById('timer-digits').style.color = '#FFFFFF';
+  const card = document.getElementById('timer-card');
+  if (card) card.classList.remove('warn','crit');
+  document.getElementById('mb-fill').style.width = '0%';
+  document.getElementById('sp').classList.remove('rest');
+  document.getElementById('status-txt').textContent = 'WALKING';
+  const btn = document.getElementById('rest-btn');
+  btn.classList.remove('is-resting','pressing');
+  btn.textContent = 'Log Rest';
+
+  const endBtn = document.getElementById('end-early-btn');
+  endBtn.classList.remove('confirming');
+  endBtn.textContent = 'End Test Early';
+}
+
+function resetTest() {
+  clearAll();
+  go('s-config');
+}
+
+// ════════════════════════════════════════
+// VOICE CONTROL
+// ════════════════════════════════════════
+function startVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { console.warn('SpeechRecognition not supported'); return; }
+
+  const r = new SR();
+  r.continuous      = true;
+  r.interimResults  = true;
+  r.maxAlternatives = 1;
+  r.lang            = 'en-US';
+
+  // Per-utterance flag — fires the command the instant the keyword appears
+  // in any interim result, then ignores duplicates until the utterance ends.
+  let fired = false;
+
+  r.onresult = e => {
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const text    = e.results[i][0].transcript.toLowerCase().trim();
+      const isFinal = e.results[i].isFinal;
+
+      if (!fired) {
+        const wantsRest   = text.includes('rest') || text.includes('stop')  || text.includes('pause');
+        const wantsResume = text.includes('walk') || text.includes('go')    ||
+                            text.includes('resume') || text.includes('continue');
+
+        if (wantsRest && !S.isResting) {
+          toggleRest();
+          fired = true;
+        } else if (wantsResume && S.isResting) {
+          toggleRest();
+          fired = true;
+        }
+      }
+
+      if (isFinal) fired = false; // utterance done — ready for next command
+    }
+  };
+
+  // 250 ms debounce before restarting — prevents the rapid onend→start→onend
+  // loop that iOS triggers during silence, which starves setInterval (timer freeze)
+  // and makes the mic indicator flicker.
+  r.onerror = e => {
+    fired = false;
+    if (e.error === 'not-allowed') return;
+    setTimeout(() => { if (S.remaining > 0 && S.recognition) { try { r.start(); } catch(_){} } }, 250);
+  };
+  r.onend = () => {
+    fired = false;
+    setTimeout(() => { if (S.remaining > 0 && S.recognition) { try { r.start(); } catch(_){} } }, 250);
+  };
+
+  try {
+    r.start();
+    S.recognition = r;
+    document.getElementById('voice-chip').classList.add('vis');
+  } catch(e) { console.warn('Cannot start voice:', e); }
+}
+
+function stopVoice() {
+  if (S.recognition) {
+    try { S.recognition.stop(); } catch(_) {}
+    S.recognition = null;
+  }
+  document.getElementById('voice-chip').classList.remove('vis');
+}
+
+// ════════════════════════════════════════
+// AUTO MODE — FUSED GYROSCOPE + ACCELEROMETER
+//
+// SLOW WALKER PROBLEM & FIX:
+//   Mean signal alone fails for slow walkers — their average gyro/accel
+//   level is low enough to look like "still". But slow walking still
+//   produces OSCILLATION with each step. Variance captures that rhythm
+//   even when the mean is near zero.
+//
+//   Score = max(mean_score, variance_score) for each sensor.
+//   This means either consistent movement OR rhythmic oscillation
+//   registers as walking — catches all speeds.
+//
+// LATENCY FIX:
+//   Buffer cut from 30→15 samples (~1.5s window instead of ~3s).
+//   Required still frames cut from 20→8 (~0.8s instead of ~2s).
+//   Decay factor increased so motion resumes register faster.
+// ════════════════════════════════════════
+
+const BUF_SIZE     = 15;   // rolling window — smaller = faster response
+const STILL_FRAMES = 8;    // ~0.8s of stillness needed to trigger rest
+const STILL_ENTER  = 0.18; // fused score below this → count toward rest
+const STILL_EXIT   = 0.32; // fused score above this → exit rest (hysteresis)
+
+// Normalization — tuned for SLOW walkers
+// Mean: what level counts as "clearly moving"
+// Var:  what std-dev (oscillation) counts as "clearly stepping"
+const GYRO_MEAN_NORM  = 10;  // deg/s   — slow walk generates ~4-8 deg/s mean
+const GYRO_VAR_NORM   = 5;   // deg/s   — each step creates ~3-6 deg/s oscillation
+const ACCEL_MEAN_NORM = 0.5; // m/s²    — slow walk generates ~0.2-0.5 m/s² mean
+const ACCEL_VAR_NORM  = 0.3; // m/s²    — step impact creates ~0.2-0.4 m/s² oscillation
+
+function startMotion() {
+  if (typeof DeviceMotionEvent === 'undefined') {
+    console.warn('DeviceMotion not available'); return;
+  }
+  const attach = () => {
+    S.motionHandler = onMotion;
+    window.addEventListener('devicemotion', onMotion, { passive: true });
+  };
+  if (typeof DeviceMotionEvent.requestPermission === 'function') {
+    DeviceMotionEvent.requestPermission()
+      .then(p => { if (p === 'granted') attach(); else console.warn('Motion denied'); })
+      .catch(() => console.warn('Motion permission error'));
+  } else {
+    attach();
+  }
+}
+
+function stopMotion() {
+  if (S.motionHandler) {
+    window.removeEventListener('devicemotion', S.motionHandler);
+    S.motionHandler = null;
+  }
+}
+
+function scoreBuffer(buf, meanNorm, varNorm) {
+  if (buf.length < 4) return 0;
+  const mean    = buf.reduce((s, v) => s + v, 0) / buf.length;
+  const stdDev  = Math.sqrt(buf.reduce((s, v) => s + (v - mean) ** 2, 0) / buf.length);
+  const mScore  = Math.min(mean   / meanNorm, 1);
+  const vScore  = Math.min(stdDev / varNorm,  1);
+  // Take the MAX — either consistent movement OR rhythmic oscillation = walking
+  return Math.max(mScore, vScore);
+}
+
+function onMotion(e) {
+  if (S.motionGrace) return;
+
+  // ── GYROSCOPE (primary) ─────────────────────────────────────
+  const rr = e.rotationRate;
+  const gyroMag = rr
+    ? Math.sqrt((rr.alpha||0)**2 + (rr.beta||0)**2 + (rr.gamma||0)**2)
+    : 0;
+
+  // ── LINEAR ACCELERATION (secondary) ────────────────────────
+  // Detect once whether device provides gravity-compensated linear accel.
+  // accelerationIncludingGravity always reads ~9.8 m/s² even when still,
+  // so its mean is useless for rest detection — use variance only in that case.
+  const la = e.acceleration;
+  const ag = e.accelerationIncludingGravity;
+  if (S.hasLinearAccel === null) {
+    S.hasLinearAccel = !!(la && la.x != null && la.y != null && la.z != null);
+  }
+  const accelRaw = S.hasLinearAccel
+    ? Math.sqrt((la.x||0)**2 + (la.y||0)**2 + (la.z||0)**2)
+    : Math.sqrt((ag?.x||0)**2 + (ag?.y||0)**2 + (ag?.z||0)**2);
+
+  // ── LOW-PASS EMA FILTER (alpha=0.25, cutoff ~2.4 Hz @ 60 Hz) ─
+  // Passes walking rhythm (0.5–2 Hz), attenuates hand tremor (8–12 Hz)
+  S.accelFiltered = 0.25 * accelRaw  + 0.75 * S.accelFiltered;
+  S.gyroFiltered  = 0.25 * gyroMag   + 0.75 * S.gyroFiltered;
+
+  // ── ROLLING BUFFERS ─────────────────────────────────────────
+  S.gyroBuf.push(S.gyroFiltered);
+  S.accelBuf.push(S.accelFiltered);
+  if (S.gyroBuf.length  > BUF_SIZE) S.gyroBuf.shift();
+  if (S.accelBuf.length > BUF_SIZE) S.accelBuf.shift();
+  if (S.gyroBuf.length  < 5) return;
+
+  // ── FUSED SCORE ─────────────────────────────────────────────
+  const gyroScore = scoreBuffer(S.gyroBuf, GYRO_MEAN_NORM, GYRO_VAR_NORM);
+  let accelScore;
+  if (S.hasLinearAccel) {
+    accelScore = scoreBuffer(S.accelBuf, ACCEL_MEAN_NORM, ACCEL_VAR_NORM);
+  } else {
+    // Gravity-including: mean is always ~9.8 — score by variance only.
+    // Still phone → near-zero variance; walking → 1–3 m/s² variance.
+    const mean   = S.accelBuf.reduce((s,v) => s+v, 0) / S.accelBuf.length;
+    const stdDev = Math.sqrt(S.accelBuf.reduce((s,v) => s+(v-mean)**2, 0) / S.accelBuf.length);
+    accelScore = Math.min(stdDev / 1.5, 1);
+  }
+  const motionScore = (gyroScore * 0.7) + (accelScore * 0.3);
+
+  // ── MOTION BAR ──────────────────────────────────────────────
+  const fill = document.getElementById('mb-fill');
+  if (fill) {
+    fill.style.width = (motionScore * 100) + '%';
+    fill.classList.toggle('still', motionScore < STILL_ENTER);
+  }
+
+  // ── HYSTERESIS DETECTION ────────────────────────────────────
+  if (!S.isResting) {
+    if (motionScore < STILL_ENTER) {
+      S.stillFrames++;
+      if (S.stillFrames >= STILL_FRAMES) beginRest();
+    } else {
+      // Faster decay so brief stillness doesn't accumulate incorrectly
+      S.stillFrames = Math.max(0, S.stillFrames - 3);
+    }
+  } else {
+    // Require sustained movement before exiting rest — prevents a single
+    // bump or phone shift from ending the rest period
+    if (motionScore > STILL_EXIT) {
+      S.walkFrames++;
+      if (S.walkFrames >= 10) {   // ~1s of continuous movement
+        S.stillFrames = 0;
+        S.walkFrames  = 0;
+        endRest(false);
+      }
+    } else {
+      S.walkFrames = Math.max(0, S.walkFrames - 2);
+    }
+  }
+}
+
+// ════════════════════════════════════════
+// WAKE LOCK — keep screen on during test
+// ════════════════════════════════════════
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    S.wakeLock = await navigator.wakeLock.request('screen');
+    S.wakeLock.addEventListener('release', () => { S.wakeLock = null; });
+  } catch(e) { console.warn('Wake lock failed:', e); }
+}
+
+function releaseWakeLock() {
+  if (S.wakeLock) { S.wakeLock.release(); S.wakeLock = null; }
+}
+
+// iOS/Safari releases wake lock when page is backgrounded — re-acquire on return
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && S.remaining > 0 && S.remaining < S.TOTAL && !S.wakeLock) {
+    requestWakeLock();
+  }
+});
+
+// ════════════════════════════════════════
+// END TEST EARLY — double-tap confirmation
+// ════════════════════════════════════════
+function endTestEarly() {
+  if (S.remaining <= 0) return;
+
+  const btn = document.getElementById('end-early-btn');
+
+  if (!S.earlyEndPending) {
+    // First tap — arm the button
+    S.earlyEndPending = true;
+    btn.classList.add('confirming');
+    btn.textContent = '⚠ Tap Again to End Test';
+
+    // Auto-cancel after 3 seconds if no second tap
+    S.earlyEndTimer = setTimeout(() => {
+      S.earlyEndPending = false;
+      btn.classList.remove('confirming');
+      btn.textContent = 'End Test Early';
+    }, 3000);
+
+  } else {
+    // Second tap — confirmed, end the test now
+    clearTimeout(S.earlyEndTimer);
+    S.earlyEndPending = false;
+
+    clearInterval(S.timerInt);
+    if (S.isResting) endRest(true);
+    stopMotion();
+    cancelAlarm();
+    // Stop the continuous alarm audio (silence is playing — must not
+    // continue counting down toward the alarm position).
+    if (S.alarmAudio) {
+      try { S.alarmAudio.pause(); S.alarmAudio.currentTime = 0; } catch(_){}
+    }
+
+    S.actualElapsed = S.TOTAL - S.remaining; // record actual time run
+    S.remaining = 0;
+
+    releaseWakeLock();
+    showSummary();
+  }
+}
+
+// ════════════════════════════════════════
+// LONG PRESS — 2s hold to log/resume rest
+// ════════════════════════════════════════
+let _pressTimer = null;
+
+function onRestDown(e) {
+  e.preventDefault();
+  if (S.remaining <= 0) return;
+  const btn = document.getElementById('rest-btn');
+  btn.classList.add('pressing');
+  // Force reflow so the CSS transition starts from width:0
+  btn.getBoundingClientRect();
+  _pressTimer = setTimeout(() => {
+    _pressTimer = null;
+    btn.classList.remove('pressing');
+    toggleRest();
+  }, 2000);
+}
+
+function onRestUp(e) {
+  if (_pressTimer) { clearTimeout(_pressTimer); _pressTimer = null; }
+  document.getElementById('rest-btn').classList.remove('pressing');
+}
+
+// ════════════════════════════════════════
+// PREVENT ACCIDENTAL NAVIGATION AWAY
+// ════════════════════════════════════════
+window.addEventListener('beforeunload', e => {
+  if (S.remaining > 0 && S.remaining < S.TOTAL) {
+    e.preventDefault();
+    e.returnValue = 'A test is in progress. Leave anyway?';
+  }
+});
+
+// ════════════════════════════════════════
+// BOOT
+// ════════════════════════════════════════
+// Attempt API-level portrait lock (works in PWA / fullscreen contexts)
+try { screen.orientation.lock('portrait').catch(()=>{}); } catch(_){}
+
+setMode('manual');
+</script>
+</body>
+</html>
