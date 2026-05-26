@@ -782,7 +782,7 @@ body { overscroll-behavior: none; touch-action: pan-y; }
     </div>
 
     <div class="motion-bar" id="motion-bar" style="display:none">
-      <span class="mb-lbl">GYRO+ACCEL</span>
+      <span class="mb-lbl">STEPS / 3s</span>
       <div class="mb-track"><div class="mb-fill" id="mb-fill"></div></div>
     </div>
 
@@ -971,16 +971,14 @@ const S = {
   restElapsedInt:    null,
   totalRestSec:      0,
 
-  // motion (auto)
-  accelBuf:          [],
-  gyroBuf:           [],
-  accelFiltered:     0,    // EMA-filtered accel — removes hand tremor
-  gyroFiltered:      0,    // EMA-filtered gyro
-  stillFrames:       0,
-  walkFrames:        0,    // frames of sustained motion needed to exit rest
+  // motion (auto) — STEP-DETECTION state
+  accelFiltered:     0,        // EMA-filtered gravity-free accel magnitude
+  aboveThreshold:    false,    // currently above the peak threshold (rising-edge tracking)
+  stepTimes:         [],       // timestamps (ms via performance.now) of detected steps
+  lastStepTime:      0,        // most recent step timestamp — 0 means "no steps yet"
   motionHandler:     null,
-  motionGrace:       true,  // grace period at test start
-  hasLinearAccel:    null,  // detected on first motion event
+  motionGrace:       true,     // grace period at test start (no detection during countdown)
+  hasLinearAccel:    null,     // detected on first motion event
 
   // audio (pre-warmed on user tap so iOS doesn't block it)
   audioCtx:          null,
@@ -1481,12 +1479,11 @@ function clearAll() {
   S.restStartMs    = null;
   S.restElapsedSec = 0;
   S.totalRestSec   = 0;
-  S.accelBuf       = [];
-  S.gyroBuf        = [];
+  // Reset step-detection state
   S.accelFiltered  = 0;
-  S.gyroFiltered   = 0;
-  S.stillFrames    = 0;
-  S.walkFrames     = 0;
+  S.aboveThreshold = false;
+  S.stepTimes      = [];
+  S.lastStepTime   = 0;
   S.hasLinearAccel = null;
   S.earlyEndPending = false;
   S.actualElapsed  = S.TOTAL;
@@ -1591,36 +1588,39 @@ function stopVoice() {
 }
 
 // ════════════════════════════════════════
-// AUTO MODE — FUSED GYROSCOPE + ACCELEROMETER
+// AUTO MODE — STEP-DETECTION ALGORITHM
 //
-// SLOW WALKER PROBLEM & FIX:
-//   Mean signal alone fails for slow walkers — their average gyro/accel
-//   level is low enough to look like "still". But slow walking still
-//   produces OSCILLATION with each step. Variance captures that rhythm
-//   even when the mean is near zero.
+// HOW IT WORKS:
+//   We count actual footfalls from acceleration impacts — same approach
+//   every commercial pedometer (Fitbit/Apple Watch/Garmin) uses.
 //
-//   Score = max(mean_score, variance_score) for each sensor.
-//   This means either consistent movement OR rhythmic oscillation
-//   registers as walking — catches all speeds.
+//   1. Compute gravity-free acceleration magnitude
+//   2. Apply EMA low-pass filter — attenuates hand tremor (8–12 Hz)
+//      while preserving the 1–2 Hz walking impulses
+//   3. Detect rising-edge crossings of PEAK_THRESHOLD as candidate steps
+//   4. Enforce MIN_STEP_INTERVAL (280 ms) so tremor / bounces don't count
+//      — no human walks faster than ~3.5 steps/sec
+//   5. Maintain a rolling 3-second list of step timestamps
+//   6. WALKING ⇄ RESTING transitions:
+//      • Enter rest: zero steps for REST_DECLARE_MS (2.2 s)
+//      • Exit rest:  ≥ WALK_STEPS_NEEDED (2) steps in the window
 //
-// LATENCY FIX:
-//   Buffer cut from 30→15 samples (~1.5s window instead of ~3s).
-//   Required still frames cut from 20→8 (~0.8s instead of ~2s).
-//   Decay factor increased so motion resumes register faster.
+// WHY THIS IS BETTER THAN VARIANCE-BASED:
+//   • Hand tremor is 8–12 Hz — far above walking, so the LPF kills it
+//     before the threshold even sees it
+//   • Slow walkers still produce sharp impact peaks each step
+//   • Phone turning at the end of the hallway no longer counts as "motion"
+//   • Single bumps (placing phone on a table, leaning on a wall) don't
+//     register as walking because no follow-up step arrives in cadence
 // ════════════════════════════════════════
 
-const BUF_SIZE     = 15;   // rolling window — smaller = faster response
-const STILL_FRAMES = 8;    // ~0.8s of stillness needed to trigger rest
-const STILL_ENTER  = 0.18; // fused score below this → count toward rest
-const STILL_EXIT   = 0.32; // fused score above this → exit rest (hysteresis)
-
-// Normalization — tuned for SLOW walkers
-// Mean: what level counts as "clearly moving"
-// Var:  what std-dev (oscillation) counts as "clearly stepping"
-const GYRO_MEAN_NORM  = 10;  // deg/s   — slow walk generates ~4-8 deg/s mean
-const GYRO_VAR_NORM   = 5;   // deg/s   — each step creates ~3-6 deg/s oscillation
-const ACCEL_MEAN_NORM = 0.5; // m/s²    — slow walk generates ~0.2-0.5 m/s² mean
-const ACCEL_VAR_NORM  = 0.3; // m/s²    — step impact creates ~0.2-0.4 m/s² oscillation
+const PEAK_THRESHOLD     = 1.0;   // m/s² — filtered impact magnitude for a step
+const PEAK_HYSTERESIS    = 0.45;  // m/s² — must dip below this before next peak armed
+const MIN_STEP_INTERVAL  = 280;   // ms   — minimum gap between consecutive steps
+const STEP_WINDOW_MS     = 3000;  // ms   — rolling window for counting recent steps
+const REST_DECLARE_MS    = 2200;  // ms   — no steps for this long → declare rest
+const WALK_STEPS_NEEDED  = 2;     // need this many steps in window to declare walking
+const EMA_ALPHA          = 0.40;  // low-pass filter coefficient (cutoff ~3.5 Hz @ 60 Hz)
 
 function startMotion() {
   if (typeof DeviceMotionEvent === 'undefined') {
@@ -1646,93 +1646,68 @@ function stopMotion() {
   }
 }
 
-function scoreBuffer(buf, meanNorm, varNorm) {
-  if (buf.length < 4) return 0;
-  const mean    = buf.reduce((s, v) => s + v, 0) / buf.length;
-  const stdDev  = Math.sqrt(buf.reduce((s, v) => s + (v - mean) ** 2, 0) / buf.length);
-  const mScore  = Math.min(mean   / meanNorm, 1);
-  const vScore  = Math.min(stdDev / varNorm,  1);
-  // Take the MAX — either consistent movement OR rhythmic oscillation = walking
-  return Math.max(mScore, vScore);
-}
-
 function onMotion(e) {
   if (S.motionGrace) return;
+  const now = performance.now();
 
-  // ── GYROSCOPE (primary) ─────────────────────────────────────
-  const rr = e.rotationRate;
-  const gyroMag = rr
-    ? Math.sqrt((rr.alpha||0)**2 + (rr.beta||0)**2 + (rr.gamma||0)**2)
-    : 0;
-
-  // ── LINEAR ACCELERATION (secondary) ────────────────────────
-  // Detect once whether device provides gravity-compensated linear accel.
-  // accelerationIncludingGravity always reads ~9.8 m/s² even when still,
-  // so its mean is useless for rest detection — use variance only in that case.
+  // ── Detect available sensor data once per session ─────────────────
   const la = e.acceleration;
   const ag = e.accelerationIncludingGravity;
   if (S.hasLinearAccel === null) {
     S.hasLinearAccel = !!(la && la.x != null && la.y != null && la.z != null);
   }
-  const accelRaw = S.hasLinearAccel
-    ? Math.sqrt((la.x||0)**2 + (la.y||0)**2 + (la.z||0)**2)
-    : Math.sqrt((ag?.x||0)**2 + (ag?.y||0)**2 + (ag?.z||0)**2);
 
-  // ── LOW-PASS EMA FILTER (alpha=0.25, cutoff ~2.4 Hz @ 60 Hz) ─
-  // Passes walking rhythm (0.5–2 Hz), attenuates hand tremor (8–12 Hz)
-  S.accelFiltered = 0.25 * accelRaw  + 0.75 * S.accelFiltered;
-  S.gyroFiltered  = 0.25 * gyroMag   + 0.75 * S.gyroFiltered;
-
-  // ── ROLLING BUFFERS ─────────────────────────────────────────
-  S.gyroBuf.push(S.gyroFiltered);
-  S.accelBuf.push(S.accelFiltered);
-  if (S.gyroBuf.length  > BUF_SIZE) S.gyroBuf.shift();
-  if (S.accelBuf.length > BUF_SIZE) S.accelBuf.shift();
-  if (S.gyroBuf.length  < 5) return;
-
-  // ── FUSED SCORE ─────────────────────────────────────────────
-  const gyroScore = scoreBuffer(S.gyroBuf, GYRO_MEAN_NORM, GYRO_VAR_NORM);
-  let accelScore;
+  // ── Compute gravity-free acceleration magnitude ───────────────────
+  // Linear accel path: magnitude is already gravity-removed.
+  // Gravity path: subtract baseline (9.81) from total magnitude and use absolute value.
+  let accelMag;
   if (S.hasLinearAccel) {
-    accelScore = scoreBuffer(S.accelBuf, ACCEL_MEAN_NORM, ACCEL_VAR_NORM);
+    accelMag = Math.sqrt((la.x||0)**2 + (la.y||0)**2 + (la.z||0)**2);
+  } else if (ag && ag.x != null) {
+    const total = Math.sqrt((ag.x||0)**2 + (ag.y||0)**2 + (ag.z||0)**2);
+    accelMag = Math.abs(total - 9.81);
   } else {
-    // Gravity-including: mean is always ~9.8 — score by variance only.
-    // Still phone → near-zero variance; walking → 1–3 m/s² variance.
-    const mean   = S.accelBuf.reduce((s,v) => s+v, 0) / S.accelBuf.length;
-    const stdDev = Math.sqrt(S.accelBuf.reduce((s,v) => s+(v-mean)**2, 0) / S.accelBuf.length);
-    accelScore = Math.min(stdDev / 1.5, 1);
+    return;
   }
-  const motionScore = (gyroScore * 0.7) + (accelScore * 0.3);
 
-  // ── MOTION BAR ──────────────────────────────────────────────
+  // ── EMA low-pass filter (kills hand tremor, preserves step impulses) ──
+  S.accelFiltered = EMA_ALPHA * accelMag + (1 - EMA_ALPHA) * S.accelFiltered;
+
+  // ── STEP DETECTION (rising-edge with hysteresis) ──────────────────
+  if (!S.aboveThreshold && S.accelFiltered > PEAK_THRESHOLD) {
+    // Rising edge — candidate step.
+    const interval = S.lastStepTime ? now - S.lastStepTime : Infinity;
+    if (interval >= MIN_STEP_INTERVAL) {
+      S.stepTimes.push(now);
+      S.lastStepTime = now;
+    }
+    S.aboveThreshold = true;
+  } else if (S.aboveThreshold && S.accelFiltered < PEAK_HYSTERESIS) {
+    // Falling edge — re-arm the detector for the next step.
+    S.aboveThreshold = false;
+  }
+
+  // ── Prune timestamps older than the window ────────────────────────
+  const cutoff = now - STEP_WINDOW_MS;
+  while (S.stepTimes.length > 0 && S.stepTimes[0] < cutoff) S.stepTimes.shift();
+
+  const stepsInWindow = S.stepTimes.length;
+  const sinceLastStep = S.lastStepTime ? now - S.lastStepTime : Infinity;
+
+  // ── WALKING ⇄ RESTING decision ────────────────────────────────────
+  if (!S.isResting) {
+    // Currently walking — declare rest when steps have stopped.
+    if (sinceLastStep > REST_DECLARE_MS) beginRest();
+  } else {
+    // Currently resting — declare walking when cadence returns.
+    if (stepsInWindow >= WALK_STEPS_NEEDED) endRest(false);
+  }
+
+  // ── Motion bar feedback (steps/3 s, capped at 5 = full bar) ───────
   const fill = document.getElementById('mb-fill');
   if (fill) {
-    fill.style.width = (motionScore * 100) + '%';
-    fill.classList.toggle('still', motionScore < STILL_ENTER);
-  }
-
-  // ── HYSTERESIS DETECTION ────────────────────────────────────
-  if (!S.isResting) {
-    if (motionScore < STILL_ENTER) {
-      S.stillFrames++;
-      if (S.stillFrames >= STILL_FRAMES) beginRest();
-    } else {
-      // Faster decay so brief stillness doesn't accumulate incorrectly
-      S.stillFrames = Math.max(0, S.stillFrames - 3);
-    }
-  } else {
-    // Require sustained movement before exiting rest — prevents a single
-    // bump or phone shift from ending the rest period
-    if (motionScore > STILL_EXIT) {
-      S.walkFrames++;
-      if (S.walkFrames >= 10) {   // ~1s of continuous movement
-        S.stillFrames = 0;
-        S.walkFrames  = 0;
-        endRest(false);
-      }
-    } else {
-      S.walkFrames = Math.max(0, S.walkFrames - 2);
-    }
+    fill.style.width = Math.min(stepsInWindow / 5, 1) * 100 + '%';
+    fill.classList.toggle('still', stepsInWindow === 0);
   }
 }
 
