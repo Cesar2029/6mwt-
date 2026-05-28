@@ -277,6 +277,36 @@ body { overscroll-behavior: none; touch-action: pan-y; }
 }
 .ao-desc { font-size:12px; color:var(--text-mid); line-height:1.4; }
 
+/* Tone selector (segmented control above the Test Alarm button) */
+.tone-section { margin-bottom:10px; }
+.tone-label {
+  font-family:var(--font-body);
+  font-size:11px; font-weight:600;
+  letter-spacing:.02em; text-transform:uppercase;
+  color:var(--text-dim); margin-bottom:8px;
+}
+.tone-segmented {
+  display:flex;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--r-md); padding:3px;
+}
+.tone-btn {
+  flex:1; min-width:0;
+  background:transparent; border:none;
+  border-radius:5px;
+  padding:9px 4px;
+  font-family:var(--font-body);
+  font-size:13px; font-weight:500;
+  color:var(--text-mid);
+  cursor:pointer;
+  transition:background .15s, color .15s;
+}
+.tone-btn.sel {
+  background:var(--bg-elev);
+  color:var(--text);
+}
+.tone-btn:active { opacity:.7; }
+
 /* Test Alarm button — diagnostic tool on config screen */
 .btn-test-alarm {
   width:100%; height:46px; border-radius:var(--r-md);
@@ -839,10 +869,17 @@ body { overscroll-behavior: none; touch-action: pan-y; }
         </div>
       </div>
 
-      <!-- Test Alarm button — appears ONLY when Alarm Sound is enabled.
-           Lets the clinician verify audio works BEFORE starting a 6-min test.
-           Most-common cause of silent alarm: iPhone physical silent switch is ON. -->
+      <!-- Test Alarm button + tone selector — appears ONLY when Alarm Sound is enabled. -->
       <div id="test-alarm-wrap" style="display:none; margin-top:10px;">
+        <!-- Tone selector: choose which alarm sound plays at end-of-test -->
+        <div class="tone-section">
+          <div class="tone-label">Alarm Tone</div>
+          <div class="tone-segmented" id="tone-segmented">
+            <button type="button" class="tone-btn sel" data-tone="ascending" onclick="setTone('ascending')">Ascending</button>
+            <button type="button" class="tone-btn"     data-tone="bell"      onclick="setTone('bell')">Bell</button>
+            <button type="button" class="tone-btn"     data-tone="medical"   onclick="setTone('medical')">Medical</button>
+          </div>
+        </div>
         <button class="btn-test-alarm" id="test-alarm-btn" onclick="testAlarm()">
           <span class="icon" id="test-alarm-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1037,7 +1074,7 @@ body { overscroll-behavior: none; touch-action: pan-y; }
 // visually confirm on the iPhone whether the latest version is deployed.
 // Shown in the logo pill on the config screen (e.g. "6MWT PRO · v1.0.0").
 // ════════════════════════════════════════
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.3.0';
 const APP_BUILD   = '2026-05-28';
 
 // ════════════════════════════════════════
@@ -1051,48 +1088,65 @@ const PRE_ALARM_SEC  = COUNTDOWN_SEC + TOTAL_SEC;     // position in audio where
 const AUDIO_DUR_SEC  = PRE_ALARM_SEC + ALARM_DUR_SEC; // total audio length
 
 // ════════════════════════════════════════
-// TIMED ALARM AUDIO — one long WAV: pip → silence → alarm
+// TIMED ALARM AUDIO — multiple selectable tones (v1.3)
 //
-// WHY THIS DESIGN:
-// iOS Safari's HTMLAudioElement unlock-and-fire-later pattern is unreliable
-// for long delays. The audio session aggressively deactivates after periods
-// of inactivity, and the same .play() call that worked instantly fails 30
-// seconds later. This has been confirmed across many community reports and
-// matches the user's experience: "sometimes it works, sometimes it doesn't."
+// SHARED LAYOUT for every tone:
+//   • 0.00–0.20 s: quiet 880 Hz pip (7% amp) — confirms audio is armed
+//   • 0.20 s → PRE_ALARM_SEC: SILENCE (zero-init Int16Array)
+//   • PRE_ALARM_SEC → end: TONE-SPECIFIC ALARM (~2 s, 45-55% amp)
 //
-// The fix: PLAY CONTINUOUS AUDIO THROUGHOUT THE TEST.
-// This is a single WAV containing:
-//   • 0.00–0.20 s: quiet pip (7% amp)   — confirms audio is armed at Begin tap
-//   • 0.20 s  → PRE_ALARM_SEC: SILENCE  — runs during countdown + walk test
-//   • PRE_ALARM_SEC → end: LOUD ALARM   — fires at exactly 0:00 on the timer
+// AVAILABLE TONES:
+//   • ascending — C-E-G-C square-wave climb (default, kitchen-timer feel)
+//   • bell      — three bell strikes with harmonic decay (clinical chime)
+//   • medical   — three short pulses + one long (medical alert pattern)
 //
-// Because audio is actively playing the whole time, iOS treats this like
-// any other media app (Spotify/podcasts) — it keeps the audio session live
-// and never has to "wake up" anything. The alarm sounds naturally because
-// it's already baked into the audio stream.
+// LAZY GENERATION:
+//   We don't generate all three WAVs at boot — each can be ~600 KB
+//   (test mode) to 8 MB (production 6-min mode). Instead we generate
+//   on demand and cache. The CURRENTLY-SELECTED tone is pre-warmed at
+//   boot so it's ready when the user taps Begin.
 //
-// 11025 Hz mono 16-bit → ~570 KB for a 28-second test audio.
+// SAME-ELEMENT iOS UNLOCK:
+//   Each tone gets its own persistent HTMLAudioElement that's reused
+//   across tests. Once unlocked by a play() in a user gesture, that
+//   specific element stays unlocked for the page lifetime.
 // ════════════════════════════════════════
-const TIMED_ALARM_SRC = (() => {
-  const sr = 11025;  // sufficient for our 523–880 Hz alarm tones
+
+const SAMPLE_RATE = 11025;  // sufficient for our 523–880 Hz alarm tones
+
+// Build the pip + silent timeline (shared base for all tones)
+function _makePcmWithPip() {
+  const sr = SAMPLE_RATE;
   const samples = Math.ceil(sr * AUDIO_DUR_SEC);
-  const pcm = new Int16Array(samples); // zero-init → silence everywhere by default
-
-  // ── Soft confirmation pip (0.00–0.20 s, 7% amplitude) ────────────────
-  // Plays immediately on Begin tap; reassures clinician audio is working.
-  {
-    const f = 880, dur = 0.20;
-    const a = 0, b = Math.min(pcm.length, (dur*sr)|0);
-    for (let i = a; i < b; i++) {
-      const fade = Math.min(i/(sr*0.008),1) * Math.min((b-1-i)/(sr*0.008),1);
-      pcm[i] = (Math.sin(2*Math.PI*f*i/sr) * fade * 0.07 * 32767)|0;
-    }
+  const pcm = new Int16Array(samples);
+  const f = 880, dur = 0.20;
+  const a = 0, b = Math.min(pcm.length, (dur*sr)|0);
+  for (let i = a; i < b; i++) {
+    const fade = Math.min(i/(sr*0.008),1) * Math.min((b-1-i)/(sr*0.008),1);
+    pcm[i] = (Math.sin(2*Math.PI*f*i/sr) * fade * 0.07 * 32767)|0;
   }
+  return pcm;
+}
 
-  // ── Silence from 0.20 s to PRE_ALARM_SEC (already zero-init) ─────────
+// Wrap a PCM buffer in a WAV header and return a blob URL
+function _pcmToWavBlobUrl(pcm) {
+  const sr = SAMPLE_RATE;
+  const h = new ArrayBuffer(44), v = new DataView(h);
+  const ws = (s,o) => [...s].forEach((c,i) => v.setUint8(o+i,c.charCodeAt(0)));
+  ws('RIFF',0); v.setUint32(4,36+pcm.byteLength,true);
+  ws('WAVE',8); ws('fmt ',12);
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true);
+  v.setUint16(32,2,true); v.setUint16(34,16,true);
+  ws('data',36); v.setUint32(40,pcm.byteLength,true);
+  return URL.createObjectURL(new Blob([h, pcm.buffer], {type:'audio/wav'}));
+}
 
-  // ── LOUD ALARM starting at PRE_ALARM_SEC ─────────────────────────────
-  // 5 ascending square-wave tones at 45% amplitude — piercing and clear.
+// ────── Tone writers — each writes its alarm into the PCM at PRE_ALARM_SEC ─────
+
+function _writeAscending(pcm) {
+  // C5–E5–G5–C6 climbing scale, then sustained C6. Square wave, 45% amp.
+  const sr = SAMPLE_RATE;
   [[523,0.00,0.20],[659,0.25,0.20],[784,0.50,0.20],[880,0.75,0.20],[880,1.05,0.60]]
     .forEach(([f, t0, dur]) => {
       const startSec = PRE_ALARM_SEC + t0;
@@ -1103,33 +1157,96 @@ const TIMED_ALARM_SRC = (() => {
         pcm[i] = ((Math.sin(2*Math.PI*f*i/sr) >= 0 ? 1 : -1) * fade * 0.45 * 32767)|0;
       }
     });
+}
 
-  // ── WAV header ───────────────────────────────────────────────────────
-  const h = new ArrayBuffer(44), v = new DataView(h);
-  const ws = (s,o) => [...s].forEach((c,i) => v.setUint8(o+i,c.charCodeAt(0)));
-  ws('RIFF',0); v.setUint32(4,36+pcm.byteLength,true);
-  ws('WAVE',8); ws('fmt ',12);
-  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
-  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true);
-  v.setUint16(32,2,true); v.setUint16(34,16,true);
-  ws('data',36); v.setUint32(40,pcm.byteLength,true);
-  return URL.createObjectURL(new Blob([h, pcm.buffer], {type:'audio/wav'}));
-})();
+function _writeBell(pcm) {
+  // Three bell strikes at 660 Hz fundamental with harmonic partials and
+  // exponential decay. Sounds like a clinical chime / hospital PA bell.
+  const sr = SAMPLE_RATE;
+  const fund = 660;
+  // Harmonic series: 1×, 2×, 3×, slightly-inharmonic 4.2× — typical bell partials
+  const harmonics = [
+    {ratio: 1.0,  amp: 0.42},
+    {ratio: 2.0,  amp: 0.22},
+    {ratio: 3.0,  amp: 0.11},
+    {ratio: 4.18, amp: 0.06},
+  ];
+  [0.00, 0.70, 1.40].forEach(t0 => {
+    const startSec = PRE_ALARM_SEC + t0;
+    const dur = 0.70;
+    const a = (startSec*sr)|0;
+    const b = Math.min(pcm.length, ((startSec + dur)*sr)|0);
+    for (let i = a; i < b; i++) {
+      const t = (i - a) / sr;
+      const env = Math.exp(-t * 4.0);          // exponential decay
+      const fadeIn = Math.min(t / 0.004, 1);   // hard fade-in (3 ms) to avoid click
+      let s = 0;
+      for (const h of harmonics) {
+        s += Math.sin(2*Math.PI * fund * h.ratio * t) * h.amp;
+      }
+      const v = (s * env * fadeIn * 0.55) * 32767;
+      pcm[i] = Math.max(-32767, Math.min(32767, v | 0));
+    }
+  });
+}
 
-// ════════════════════════════════════════
-// PERSISTENT ALARM ELEMENT — created ONCE for the page lifetime.
-// Per Apple/WebKit guidance: the same HTMLAudioElement instance must be
-// used start-to-end. Creating a new one per test risks losing the unlock.
-// ════════════════════════════════════════
-const ALARM_AUDIO = new Audio(TIMED_ALARM_SRC);
-ALARM_AUDIO.setAttribute('playsinline', '');
-ALARM_AUDIO.setAttribute('webkit-playsinline', '');
-ALARM_AUDIO.setAttribute('x-webkit-airplay', 'deny'); // prevent accidental AirPlay handoff
-ALARM_AUDIO.preload = 'auto';
-ALARM_AUDIO.controls = false;
-ALARM_AUDIO.autoplay = false;
-ALARM_AUDIO.loop = false;
-ALARM_AUDIO.load();
+function _writeMedical(pcm) {
+  // Three short 880 Hz square-wave pulses, then one long sustained pulse.
+  // Classic medical-device alert pattern. Square wave for piercing clarity.
+  const sr = SAMPLE_RATE;
+  [[880, 0.00, 0.18],
+   [880, 0.30, 0.18],
+   [880, 0.60, 0.18],
+   [880, 1.00, 1.00]]
+    .forEach(([f, t0, dur]) => {
+      const startSec = PRE_ALARM_SEC + t0;
+      const a = (startSec*sr)|0;
+      const b = Math.min(pcm.length, ((startSec + dur)*sr)|0);
+      for (let i = a; i < b; i++) {
+        const fade = Math.min((i-a)/(sr*0.005),1) * Math.min((b-1-i)/(sr*0.005),1);
+        pcm[i] = ((Math.sin(2*Math.PI*f*i/sr) >= 0 ? 1 : -1) * fade * 0.50 * 32767)|0;
+      }
+    });
+}
+
+const TONE_WRITERS = {
+  ascending: _writeAscending,
+  bell:      _writeBell,
+  medical:   _writeMedical,
+};
+
+// Lazy generation + caching — keep separate Audio elements per tone so
+// each can keep its iOS unlock state independently.
+const _ALARM_SRC_CACHE   = {};
+const _ALARM_AUDIO_CACHE = {};
+
+function getAlarmAudio(tone) {
+  if (!TONE_WRITERS[tone]) tone = 'ascending';
+  if (_ALARM_AUDIO_CACHE[tone]) return _ALARM_AUDIO_CACHE[tone];
+
+  // Build the PCM + WAV blob URL the first time this tone is requested
+  if (!_ALARM_SRC_CACHE[tone]) {
+    const pcm = _makePcmWithPip();
+    TONE_WRITERS[tone](pcm);
+    _ALARM_SRC_CACHE[tone] = _pcmToWavBlobUrl(pcm);
+  }
+  const a = new Audio(_ALARM_SRC_CACHE[tone]);
+  a.setAttribute('playsinline', '');
+  a.setAttribute('webkit-playsinline', '');
+  a.setAttribute('x-webkit-airplay', 'deny');
+  a.preload = 'auto';
+  a.controls = false;
+  a.autoplay = false;
+  a.loop = false;
+  a.load();
+  _ALARM_AUDIO_CACHE[tone] = a;
+  return a;
+}
+
+// Convenience: get the audio element for whatever tone the user currently has selected
+function getActiveAlarmAudio() {
+  return getAlarmAudio((S && S.alerts && S.alerts.tone) || 'ascending');
+}
 
 
 // ════════════════════════════════════════
@@ -1138,8 +1255,9 @@ ALARM_AUDIO.load();
 const S = {
   mode:      'manual',   // 'auto' | 'manual'
   voiceOn:   false,
-  // alerts — each can be toggled independently, any combination allowed
-  alerts: { vibrate: false, green: true, sound: false },
+  // alerts — each can be toggled independently, any combination allowed.
+  // `tone` selects which alarm sound plays at end-of-test (when sound is on).
+  alerts: { vibrate: false, green: true, sound: false, tone: 'ascending' },
 
   // timer — uses TOTAL_SEC constant defined above
   TOTAL:      TOTAL_SEC,
@@ -1185,9 +1303,8 @@ const S = {
 
   // pre-scheduled alarm nodes — cancelled on early end
   alarmNodes:        [],
-  // alarmAudio is the module-level ALARM_AUDIO above — same element reused
-  // across tests. We do not recreate it. Kept here as null until beginTest()
-  // assigns the reference so existing code paths keep working.
+  // alarmAudio is set to the currently-selected tone's persistent Audio
+  // element in beginTest() via getActiveAlarmAudio(). Stays null until then.
   alarmAudio:        null,
 };
 
@@ -1258,11 +1375,25 @@ function toggleAlert(key) {
   row.classList.toggle('sel', S.alerts[key]);
   sw.classList.toggle('on',   S.alerts[key]);
 
-  // Show/hide the Test Alarm button alongside the Alarm Sound toggle
+  // Show/hide the Test Alarm + Tone selector alongside the Alarm Sound toggle
   if (key === 'sound') {
     document.getElementById('test-alarm-wrap').style.display =
       S.alerts.sound ? 'block' : 'none';
   }
+}
+
+// Switch which alarm tone plays at end-of-test. Persists to localStorage
+// so the PT's preference survives page reloads / home-screen re-install.
+function setTone(t) {
+  if (!TONE_WRITERS[t]) return;
+  S.alerts.tone = t;
+  try { localStorage.setItem('6mwt_alarmTone', t); } catch(_) {}
+  // Pre-warm the audio for this tone so it's ready when Begin is tapped
+  getAlarmAudio(t);
+  // Update segmented-control highlight
+  document.querySelectorAll('.tone-btn').forEach(b =>
+    b.classList.toggle('sel', b.dataset.tone === t)
+  );
 }
 
 // ════════════════════════════════════════
@@ -1304,9 +1435,9 @@ function testAlarm() {
     return;
   }
 
-  // Use the SAME persistent ALARM_AUDIO element so the iOS unlock state
-  // we acquire here carries over to the real test.
-  _testAlarmEl = ALARM_AUDIO;
+  // Use the SAME persistent audio element for the currently-selected tone
+  // so the iOS unlock state we acquire here carries over to the real test.
+  _testAlarmEl = getActiveAlarmAudio();
   try {
     _testAlarmEl.pause();
     // Jump straight to the alarm portion of the audio (skip the silence)
@@ -1391,15 +1522,15 @@ function beginTest() {
   } catch(e) { console.warn('AudioContext init:', e); }
 
   // ── CONTINUOUS AUDIO PLAYBACK ──────────────────────────────────────
-  // We use the persistent module-level ALARM_AUDIO element. Reset its
-  // position to 0 (in case a previous test left it elsewhere), then if
-  // the Alarm Sound toggle is on, start playing immediately.
+  // Use the persistent Audio element for the currently-selected tone.
+  // Reset its position to 0 (in case a previous test left it elsewhere),
+  // then if the Alarm Sound toggle is on, start playing immediately.
   //
-  // The single long WAV contains: pip → silence → alarm. By starting it
-  // inside this user-gesture context, iOS keeps the audio session alive
-  // for the entire test, and the alarm fires naturally when the audio
-  // reaches the PRE_ALARM_SEC mark (which lines up with the timer at 0:00).
-  S.alarmAudio = ALARM_AUDIO;
+  // The WAV contains: pip → silence → alarm. By starting it inside this
+  // user-gesture context, iOS keeps the audio session alive for the entire
+  // test, and the alarm fires naturally when the audio reaches PRE_ALARM_SEC
+  // (which lines up with the timer at 0:00).
+  S.alarmAudio = getActiveAlarmAudio();
   try {
     S.alarmAudio.pause();
     S.alarmAudio.currentTime = 0;
@@ -1534,6 +1665,20 @@ function beginRest() {
 function endRest(fromTimer) {
   if (!S.isResting) return;
   const durSec = Math.round((Date.now() - S.restStartMs) / 1000);
+
+  // AUTO-MODE BRIEF-REST FILTER: if the algorithm declared rest but it
+  // ended within MIN_REST_SEC, that was almost certainly a turnaround or
+  // a brief pause — not a clinically meaningful rest. Cancel it entirely.
+  // (Manual mode honors PT taps even if brief — PT had intent.)
+  if (S.mode === 'auto' && !fromTimer && durSec < MIN_REST_SEC) {
+    S.restCount--;                       // undo the increment from beginRest
+    S.isResting = false;
+    clearInterval(S.restElapsedInt);
+    document.getElementById('rest-elapsed').textContent = '';
+    refreshUI();
+    return;                              // do not log, do not update totalRestSec
+  }
+
   S.totalRestSec += durSec;
   S.restLog.push({ n: S.restCount, startSec: elapsedSec() - durSec, durSec });
   S.isResting = false;
@@ -1696,12 +1841,12 @@ function clearAll() {
   S.earlyEndPending = false;
   S.actualElapsed  = S.TOTAL;
   S.motionGrace    = true;
-  // Stop any in-flight audio playback but DO NOT null S.alarmAudio —
-  // we reuse the same persistent HTMLAudioElement (ALARM_AUDIO) across
-  // tests so its iOS unlock state stays intact.
-  if (S.alarmAudio) {
-    try { S.alarmAudio.pause(); S.alarmAudio.currentTime = 0; } catch(_){}
-  }
+  // Stop any in-flight audio playback. We pause ALL cached alarm elements
+  // (one per tone) because the user might have switched tones since last test.
+  // The unlocked state of each element is preserved across pauses.
+  Object.values(_ALARM_AUDIO_CACHE).forEach(a => {
+    try { a.pause(); a.currentTime = 0; } catch(_){}
+  });
 
   document.getElementById('rl-list').innerHTML = '<div class="rl-empty">No rests logged yet</div>';
   document.getElementById('rest-elapsed').textContent = '';
@@ -1813,26 +1958,33 @@ function stopVoice() {
 //     • Wheel stopped + shake:  3–10 deg/s tiny rotational jitter
 //   The gap between these two regimes is huge — gyro alone is reliable.
 //
-// THRESHOLD TUNING (gyro mean of magnitude):
-//   • Slow shuffle  (0.3 m/s walk):     wheel ~70 deg/s   → score 2.8 → 1.0
-//   • Brisk walk    (1.4 m/s walk):     wheel ~330 deg/s  → score 13  → 1.0
-//   • Hand tremor at rest:               ~3–8 deg/s        → score 0.12–0.32 (below entry)
-//   • MOTION_ENTER_THR = 0.45 sits comfortably between these regimes
+// THRESHOLD TUNING (gyro mean of magnitude, v1.2 tuning):
+//   • Slow shuffle  (0.3 m/s walk):     wheel ~70 deg/s   → score 2.0 → 1.0
+//   • Brisk walk    (1.4 m/s walk):     wheel ~330 deg/s  → score 9.4 → 1.0
+//   • Slight tremor at rest:             ~3–6 deg/s        → score 0.09–0.17 (below exit)
+//   • Moderate tremor at rest:           ~8–12 deg/s       → score 0.23–0.34 (in dead zone — state holds)
+//   • MOTION_ENTER_THR = 0.45 sits well above all rest scenarios
 //
 // FAST TRANSITIONS (time-based hysteresis):
-//   • Walking declared in ~470 ms after PT starts pushing the wheel
+//   • Walking declared in ~570 ms after PT starts pushing the wheel
 //   • Resting declared in ~1020 ms after PT stops pushing
-//   • Dead zone (0.20–0.45) prevents flapping at the boundary
+//   • Dead zone (0.25–0.45) prevents flapping at the boundary
+//
+// BRIEF-REST FILTER (v1.2):
+//   Any auto-detected rest shorter than MIN_REST_SEC (2 s) is retroactively
+//   cancelled in endRest() — turnarounds and momentary slow-downs don't
+//   pollute the rest log. See endRest() for the cancellation logic.
 // ════════════════════════════════════════
 
 const MOTION_BUF_SIZE     = 8;     // rolling window (~320 ms @ 25 Hz sampling)
 const MOTION_ENTER_THR    = 0.45;  // score above this counts as moving
-const MOTION_EXIT_THR     = 0.20;  // score below this counts as still (hysteresis gap)
-const WALK_DECLARE_MS     = 150;   // sustained motion before walking is declared
+const MOTION_EXIT_THR     = 0.25;  // score below this counts as still (raised in v1.2 — more margin against tremor)
+const WALK_DECLARE_MS     = 250;   // sustained motion before walking is declared (raised — rejects spikes)
 const REST_DECLARE_MS     = 700;   // sustained stillness before rest is declared
-const GYRO_NORM           = 25;    // deg/s mean rotation → score = 1 (catches slow walkers)
+const GYRO_NORM           = 35;    // deg/s mean rotation → score = 1 (raised — tremor falls below threshold)
 const ACCEL_VAR_NORM      = 0.50;  // backup signal only, heavily downweighted
 const EMA_ALPHA           = 0.50;  // moderate filtering — keeps response fast
+const MIN_REST_SEC        = 2;     // auto-mode rests shorter than this are cancelled (likely false positives)
 
 function startMotion() {
   if (typeof DeviceMotionEvent === 'undefined') {
@@ -2054,6 +2206,19 @@ const _logoTxt = document.getElementById('logo-pill-text');
 if (_logoTxt) _logoTxt.textContent = `6MWT PRO · v${APP_VERSION}`;
 // Also expose in console for quick diagnostics
 console.log(`6MWT Pro v${APP_VERSION} (build ${APP_BUILD})`);
+
+// Restore saved alarm-tone preference (if any), then pre-warm that tone's
+// audio so it's loaded and ready when the user taps Begin.
+try {
+  const _savedTone = localStorage.getItem('6mwt_alarmTone');
+  if (_savedTone && TONE_WRITERS[_savedTone]) {
+    S.alerts.tone = _savedTone;
+    document.querySelectorAll('.tone-btn').forEach(b =>
+      b.classList.toggle('sel', b.dataset.tone === _savedTone)
+    );
+  }
+} catch(_) {}
+getAlarmAudio(S.alerts.tone);
 
 setMode('manual');
 </script>
