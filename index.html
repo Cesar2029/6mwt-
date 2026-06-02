@@ -83,12 +83,21 @@ html,body {
 html { overscroll-behavior: none; }
 body { overscroll-behavior: none; touch-action: pan-y; }
 
-/* ── BOTTOM BAR ── */
+/* ── BOTTOM BAR ──
+   Used on the config and summary screens as the last element (so it owns the
+   safe-area padding). On the active screen, the rest button is pulled out
+   AFTER the bottom-bar so it can sit flush to the screen bottom — see
+   .btn-rest below for how the active-screen layout handles the safe area. */
 .bottom-bar {
   padding:16px 20px;
   padding-bottom:calc(16px + env(safe-area-inset-bottom,0px));
   background:linear-gradient(to top, var(--bg) 88%, transparent);
   flex-shrink:0;
+}
+/* Active screen variant: bottom-bar sits ABOVE the flush rest button,
+   so it should NOT carry the safe-area-inset-bottom. */
+#s-active .bottom-bar {
+  padding-bottom:8px;
 }
 
 /* ── ICON SYSTEM ── */
@@ -113,15 +122,30 @@ body { overscroll-behavior: none; touch-action: pan-y; }
 }
 
 .btn-rest {
-  /* Tall target so the PT can tap without looking — finger anywhere
-     in the bottom third of the screen will hit it. */
-  height:170px; font-size:24px; font-weight:600;
+  /* Edge-to-edge tap target flush against the bottom of the screen.
+     PT can tap by feel — finger anywhere in the bottom third of the
+     phone will hit it, including the iOS home-indicator zone. */
+  width:100%;
+  height:auto;
+  min-height:170px;
+  /* Inner padding: content sits ABOVE the iOS home indicator,
+     but the colored button surface extends right to the bottom edge. */
+  padding:0 0 calc(env(safe-area-inset-bottom, 0px) + 8px);
+  font-family:var(--font-body);
+  font-size:24px; font-weight:600;
   background:var(--accent-soft);
   color:var(--accent);
-  border:1px solid var(--accent-line);
+  border:none;
+  border-top:1px solid var(--accent-line);
+  border-radius:0;
+  display:flex; align-items:center; justify-content:center; gap:8px;
   position:relative; overflow:hidden;
+  flex-shrink:0;
+  cursor:pointer;
+  transition:opacity .12s ease, background .12s ease, border-color .12s ease;
   -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
 }
+.btn-rest:active { opacity:.72; }
 .btn-rest::after {
   content:''; position:absolute; top:0; left:0; bottom:0;
   width:0%; background:rgba(255,255,255,0.06);
@@ -428,6 +452,7 @@ body { overscroll-behavior: none; touch-action: pan-y; }
   padding:32px 20px 26px;
   transition:border-color .4s ease;
 }
+.timer-card.good { border-color:var(--accent-line); }
 .timer-card.warn { border-color:var(--warning-line); }
 .timer-card.crit { border-color:var(--danger-line); }
 .timer-lbl {
@@ -723,7 +748,7 @@ body { overscroll-behavior: none; touch-action: pan-y; }
   width:100%; height:40px; border-radius:var(--r-md);
   font-family:var(--font-body);
   font-size:14px; font-weight:500;
-  cursor:pointer; transition:all .15s ease; margin-bottom:8px;
+  cursor:pointer; transition:all .15s ease;
   background:transparent;
   color:var(--text-dim);
   border:1px solid var(--border);
@@ -1002,10 +1027,15 @@ body { overscroll-behavior: none; touch-action: pan-y; }
       <button class="btn-end-early" id="end-early-btn" onclick="endTestEarly()">
         End Test Early
       </button>
-      <button class="btn btn-rest" id="rest-btn" onclick="toggleRest()">
-        Log Rest
-      </button>
     </div>
+
+    <!-- Rest button lives OUTSIDE bottom-bar so it can be flush to the
+         very bottom edge of the screen (no padding/safe-area gap below).
+         Tap area extends into the iOS home-indicator zone — that's intentional
+         so the PT can tap by feel without looking. -->
+    <button class="btn-rest" id="rest-btn" onclick="toggleRest()">
+      Log Rest
+    </button>
   </div>
 
   <!-- ══════════ SCREEN 3: SUMMARY ══════════ -->
@@ -1076,7 +1106,7 @@ body { overscroll-behavior: none; touch-action: pan-y; }
 // visually confirm on the iPhone whether the latest version is deployed.
 // Shown in the logo pill on the config screen (e.g. "6MWT PRO · v1.0.0").
 // ════════════════════════════════════════
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.2';
 const APP_BUILD   = '2026-05-28';
 
 // ════════════════════════════════════════
@@ -1642,21 +1672,26 @@ function renderTimer() {
   digits.textContent = fmt(S.remaining);
 
   // Thresholds scale with S.TOTAL so the same proportional warning
-  // applies whether the test is 30 s (dev) or 360 s (production)
-  const critSec = Math.ceil(S.TOTAL * 0.15); // last 15% → red    (54 s of 360)
-  const warnSec = Math.ceil(S.TOTAL * 0.35); // last 35% → amber  (126 s of 360)
+  // applies whether the test is 20 s (dev) or 360 s (production).
+  // For the standard 6-min test:
+  //   GOOD  → 6:00 to 2:06   (top 65% of remaining time, green)
+  //   WARN  → 2:06 to 0:55   (heads-up, amber)
+  //   CRIT  → 0:54 to 0:00   (final stretch, red)
+  const critSec = Math.ceil(S.TOTAL * 0.15);
+  const warnSec = Math.ceil(S.TOTAL * 0.35);
 
   if (S.remaining <= critSec) {
     digits.style.color = 'var(--danger)';
     card.classList.add('crit');
-    card.classList.remove('warn');
+    card.classList.remove('warn', 'good');
   } else if (S.remaining <= warnSec) {
     digits.style.color = 'var(--warning)';
     card.classList.add('warn');
-    card.classList.remove('crit');
+    card.classList.remove('crit', 'good');
   } else {
-    digits.style.color = '';  // clear inline → CSS default (var(--text))
-    card.classList.remove('warn','crit');
+    digits.style.color = 'var(--accent)';  // GREEN — plenty of time left
+    card.classList.add('good');
+    card.classList.remove('warn', 'crit');
   }
 }
 
@@ -1875,9 +1910,12 @@ function clearAll() {
   document.getElementById('rest-elapsed').textContent = '';
   document.getElementById('rc-num').textContent = '0';
   document.getElementById('timer-digits').textContent = fmt(S.TOTAL);
-  document.getElementById('timer-digits').style.color = '';  // reset to CSS default (var(--text))
+  document.getElementById('timer-digits').style.color = 'var(--accent)';  // reset to GREEN
   const card = document.getElementById('timer-card');
-  if (card) card.classList.remove('warn','crit');
+  if (card) {
+    card.classList.add('good');
+    card.classList.remove('warn','crit');
+  }
   document.getElementById('mb-fill').style.width = '0%';
   document.getElementById('sp').classList.remove('rest');
   document.getElementById('status-txt').textContent = 'WALKING';
